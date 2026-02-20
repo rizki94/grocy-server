@@ -1,0 +1,48 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1766033320568,
+      "tag": "0000_cynical_red_skull",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1766045096234,
+      "tag": "0001_busy_apocalypse",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1766126123818,
+      "tag": "0002_polite_valeria_richards",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1766544357472,
+      "tag": "0003_late_spectrum",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1770624711478,
+      "tag": "0004_simplify_transaction_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1770787605543,
+      "tag": "0005_steady_franklin_storm",
+      "breakpoints": true
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+export const attributeType = ["string", "number", "boolean", "enum"] as const;
