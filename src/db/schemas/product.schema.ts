@@ -41,7 +41,6 @@ export const productDetails = pgTable("product_details", {
     baseRatio: smallint("base_ratio").notNull(),
     cost: decimalAsNumber(10, 2)("cost").notNull().default(0),
     weight: decimalAsNumber(10, 2)("weight").notNull().default(0),
-    volume: decimalAsNumber(10, 3)("volume").notNull().default(0),
     length: decimalAsNumber(10, 3)("length").notNull().default(0),
     width: decimalAsNumber(10, 3)("width").notNull().default(0),
     height: decimalAsNumber(10, 3)("height").notNull().default(0),

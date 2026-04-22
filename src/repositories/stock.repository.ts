@@ -145,7 +145,7 @@ export async function updateStockForTransaction(
 
                 // update cost for sales + purchase_return + adjustment
                 if (
-                    ["sales", "purchase_return", "adjustment"].includes(
+                    ["sales", "pos_sales", "purchase_return", "adjustment"].includes(
                         transactionType,
                     )
                 ) {

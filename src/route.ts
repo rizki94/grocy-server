@@ -17,13 +17,16 @@ import userRouter from "./routes/user.route";
 import salesRouter from "./routes/sales.route";
 import dashboardRouter from "./routes/dashboard.route";
 import reportRouter from "./routes/report.route";
-import glAccountRouter from "./routes/gl-accout.route";
+import glAccountRouter from "./routes/gl-account.route";
 import paymentRouter from "./routes/payment.route";
 import receivableRouter from "./routes/receivable.route";
 import journalRoute from "./routes/journal.route";
 import stockAdjustmentRouter from "./routes/stock-adjustment.route";
 import warehouseRouter from "./routes/warehouse.route";
 import priceGroupRouter from "./routes/price-group.route";
+import posSessionRouter from "./routes/pos-session.route";
+import posRouter from "./routes/pos.route";
+import paymentMethodRouter from "./routes/payment-method.route";
 
 export const route = Router();
 
@@ -59,3 +62,6 @@ route.use("/journals", journalRoute);
 route.use("/stock-adjustments", stockAdjustmentRouter);
 route.use("/warehouses", warehouseRouter);
 route.use("/price-groups", priceGroupRouter);
+route.use("/pos-sessions", posSessionRouter);
+route.use("/pos", posRouter);
+route.use("/payment-methods", paymentMethodRouter);

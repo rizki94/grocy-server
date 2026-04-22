@@ -31,6 +31,8 @@ export const payments = pgTable("payments", {
     status: text("status", { enum: ["draft", "posted", "cancelled"] })
         .notNull()
         .default("draft"),
+    reference: text("reference"),
+    note: text("note"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
         .defaultNow()

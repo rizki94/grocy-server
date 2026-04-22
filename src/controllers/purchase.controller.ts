@@ -117,7 +117,7 @@ export const createPurchase = async (req: Request, res: Response) => {
         }
 
         logAction(req, {
-            action: "update",
+            action: "insert",
             table: "transactions",
             data: {
                 transaction: createdPurchase,

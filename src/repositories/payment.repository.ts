@@ -77,6 +77,8 @@ export async function createPayment(
                 totalAmount: data.totalAmount,
                 type: data.type,
                 status: data.status || "draft",
+                reference: data.reference,
+                note: data.note,
             })
             .returning();
 
@@ -110,6 +112,8 @@ export async function updatePayment(id: string, data: PaymentWithLinesInsert) {
                 totalAmount: data.totalAmount,
                 type: data.type,
                 status: data.status || "draft",
+                reference: data.reference,
+                note: data.note,
             })
             .where(eq(payments.id, id));
 
@@ -165,22 +169,30 @@ export async function postPayment(id: string) {
 
             if (!openItem) throw new Error("Open item not found");
 
-            const newPaidAmount =
-                (openItem.paidAmount || 0) + Number(line.amount);
-            const isFullyPaid = newPaidAmount >= Number(openItem.amount);
+            const currentPaid = Number(openItem.paidAmount || 0);
+            const paying = Number(line.amount);
+            const total = Number(openItem.amount);
+            
+            const newPaidAmount = currentPaid + paying;
+            // Use small epsilon or rounding to avoid floating point issues (2 decimal places)
+            const isFullyPaid = Math.round(newPaidAmount * 100) >= Math.round(total * 100);
 
             await tx
                 .update(openInvoices)
                 .set({
                     paidAmount: newPaidAmount,
                     status: isFullyPaid ? "paid" : "partial",
+                    updatedAt: new Date(),
                 })
                 .where(eq(openInvoices.id, line.openInvoiceId));
 
             if (openItem.transactionId) {
                 await tx
                     .update(transactions)
-                    .set({ status: isFullyPaid ? "paid" : "partial" })
+                    .set({ 
+                        status: isFullyPaid ? "paid" : "partial",
+                        updatedAt: new Date()
+                    })
                     .where(eq(transactions.id, openItem.transactionId));
             }
         }
@@ -215,9 +227,9 @@ export async function postPayment(id: string) {
             .insert(journals)
             .values({
                 date: payment.date,
-                description: `Payment ${payment.type === "payable" ? "Out" : "In"} #${id}`,
+                description: payment.note || `Payment ${payment.type === "payable" ? "Out" : "In"} #${id}${payment.reference ? ` (${payment.reference})` : ""}`,
                 status: "posted",
-                transactionId: null, // Payment doesn't link to transaction directly in journlas usually, or we can leave null
+                transactionId: null,
             })
             .returning();
 
@@ -396,4 +408,21 @@ export async function voidPayment(id: string) {
 
         return { id, status: "cancelled" };
     });
+}
+
+export async function findPaymentsByTransactionId(transactionId: string) {
+    return await db
+        .select({
+            id: payments.id,
+            date: payments.date,
+            totalAmount: payments.totalAmount,
+            status: payments.status,
+            reference: payments.reference,
+            note: payments.note,
+            amountPaid: paymentLines.amount,
+        })
+        .from(paymentLines)
+        .innerJoin(payments, eq(paymentLines.paymentId, payments.id))
+        .innerJoin(openInvoices, eq(paymentLines.openInvoiceId, openInvoices.id))
+        .where(eq(openInvoices.transactionId, transactionId));
 }

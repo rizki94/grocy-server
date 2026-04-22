@@ -177,6 +177,7 @@ export const getOpenReceivableInvoices = async (
         const unpaidInvoices = await db
             .select({
                 id: openInvoices.id,
+                transactionId: openInvoices.transactionId,
                 invoice: transactions.invoice,
                 dueDate: openInvoices.dueDate,
                 amount: openInvoices.amount,
@@ -205,6 +206,7 @@ export const getOpenReceivableInvoices = async (
             const lines = await db
                 .select({
                     id: openInvoices.id,
+                    transactionId: openInvoices.transactionId,
                     invoice: transactions.invoice,
                     dueDate: openInvoices.dueDate,
                     amount: openInvoices.amount,
@@ -257,7 +259,15 @@ export const createReceivableController = async (
     const payment = parsed.data;
 
     try {
-        const createdPayment = await createReceivable(payment, req.user!);
+        // Force draft status during creation so postPayment can handle side effects
+        const createdPayment = await createReceivable(
+            { ...payment, status: "draft" },
+            req.user!,
+        );
+
+        if (payment.status === "posted") {
+            await postPayment(createdPayment.id);
+        }
 
         logAction(req, {
             action: "insert",
@@ -268,11 +278,13 @@ export const createReceivableController = async (
         });
 
         return res.status(201).json(createdPayment);
-    } catch (error) {
+    } catch (error: any) {
         console.error("Error creating receivable:", error);
-        return res.status(500).json({ message: "Failed to create receivable" });
+        return res
+            .status(error instanceof Error ? 400 : 500)
+            .json({ message: error.message || "Failed to create receivable" });
     }
-};
+}
 
 export const updateReceivableController = async (
     req: Request,

@@ -11,8 +11,37 @@ import { logger } from "./logger";
 import pinoHttp from "pino-http";
 
 const app = express();
+app.set("etag", false);
 
-app.use(pinoHttp({ logger }));
+app.use(
+    pinoHttp({
+        logger,
+        customProps: (req: any) => {
+            const fullUrl = req.originalUrl || req.url || "";
+            let table = "system";
+
+            // Matches /api/{resource}/...
+            const apiMatch = fullUrl.match(/\/api\/([^\/\?]+)/);
+            if (apiMatch) {
+                table = apiMatch[1];
+            }
+
+            return {
+                action: (req.method || "GET").toLowerCase(),
+                table,
+                userId: req.user?.id,
+            };
+        },
+        customSuccessMessage: (req, res) =>
+            `${req.method} ${req.originalUrl || req.url} ${res.statusCode}`,
+        customErrorMessage: (req, res, err) =>
+            `${req.method} ${req.originalUrl || req.url} ${res.statusCode} - ${err.message}`,
+        serializers: {
+            req: () => undefined,
+            res: () => undefined,
+        },
+    })
+);
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());

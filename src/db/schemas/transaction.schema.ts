@@ -17,6 +17,7 @@ import {
 import { productDetails, products } from "./product.schema";
 import { warehouses } from "./warehouse.schema";
 import { relations } from "drizzle-orm";
+import { posSessions } from "./pos-session.schema";
 
 export const transactionStatusEnum = pgEnum(
     "transaction_status",
@@ -50,6 +51,7 @@ export const transactions = pgTable("transactions", {
         .defaultNow()
         .notNull()
         .$onUpdate(() => new Date()),
+    posSessionId: uuid("pos_session_id").references(() => posSessions.id),
 });
 
 export const transactionDetails = pgTable("transaction_details", {
@@ -96,6 +98,10 @@ export const transactionsRelations = relations(
             relationName: "parent_child",
         }),
         details: many(transactionDetails),
+        posSession: one(posSessions, {
+            fields: [transactions.posSessionId],
+            references: [posSessions.id],
+        }),
     }),
 );
 

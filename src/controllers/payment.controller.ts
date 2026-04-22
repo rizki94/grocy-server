@@ -1,6 +1,7 @@
 import {
     createPayment,
     findPaymentById,
+    findPaymentsByTransactionId,
     postPayment,
     updatePayment,
     voidPayment,
@@ -176,6 +177,7 @@ export const getOpenInvoices = async (req: Request, res: Response) => {
         const unpaidInvoices = await db
             .select({
                 id: openInvoices.id,
+                transactionId: openInvoices.transactionId,
                 invoice: transactions.invoice,
                 dueDate: openInvoices.dueDate,
                 amount: openInvoices.amount,
@@ -204,6 +206,7 @@ export const getOpenInvoices = async (req: Request, res: Response) => {
             const lines = await db
                 .select({
                     id: openInvoices.id,
+                    transactionId: openInvoices.transactionId,
                     invoice: transactions.invoice,
                     dueDate: openInvoices.dueDate,
                     amount: openInvoices.amount,
@@ -253,7 +256,15 @@ export const createPaymentController = async (req: Request, res: Response) => {
     const payment = parsed.data;
 
     try {
-        const createdPayment = await createPayment(payment, req.user!);
+        // Force draft status during creation so postPayment can handle side effects
+        const createdPayment = await createPayment(
+            { ...payment, status: "draft" },
+            req.user!,
+        );
+
+        if (payment.status === "posted") {
+            await postPayment(createdPayment.id);
+        }
 
         logAction(req, {
             action: "insert",
@@ -264,11 +275,13 @@ export const createPaymentController = async (req: Request, res: Response) => {
         });
 
         return res.status(201).json(createdPayment);
-    } catch (error) {
+    } catch (error: any) {
         console.error("Error creating payment:", error);
-        return res.status(500).json({ message: "Failed to create payment" });
+        return res
+            .status(error instanceof Error ? 400 : 500)
+            .json({ message: error.message || "Failed to create payment" });
     }
-};
+}
 
 export const updatePaymentController = async (req: Request, res: Response) => {
     const parsed = paymentWithLinesUpdateSchema.safeParse(req.body);
@@ -340,3 +353,15 @@ export const voidPaymentController = async (req: Request, res: Response) => {
         });
     }
 };
+
+export const getPaymentsByTransaction = async (req: Request, res: Response) => {
+    const { transactionId } = req.params;
+    try {
+        const payments = await findPaymentsByTransactionId(transactionId);
+        res.json(payments);
+    } catch (err: any) {
+        console.error("Fetch payments by transaction error:", err);
+        res.status(500).json({ message: "Failed to fetch payments" });
+    }
+};
+

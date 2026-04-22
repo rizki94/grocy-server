@@ -2,7 +2,6 @@ import {
     pgTable,
     text,
     timestamp,
-    unique,
     uuid,
     varchar,
 } from "drizzle-orm/pg-core";
@@ -15,5 +14,4 @@ export const productUnits = pgTable(
         name: text("name").notNull().unique(),
         createdAt: timestamp("created_at").defaultNow().notNull(),
     },
-    (table) => [unique().on(table.name, table.abbreviation)],
 );

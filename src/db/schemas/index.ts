@@ -15,3 +15,5 @@ export * from "./account-mapping.schema";
 export * from "./payment.schema";
 export * from "./warehouse.schema";
 export * from "./price-group.schema";
+export * from "./pos-session.schema";
+export * from "./payment-method.schema";

@@ -26,7 +26,6 @@ export const productDetailInsertSchema = z.object({
     baseRatio: z.number().min(1),
     cost: z.number().min(0).optional().default(0),
     weight: z.number().min(0).optional().default(0),
-    volume: z.number().min(0).optional().default(0),
     length: z.number().min(0).optional().default(0),
     width: z.number().min(0).optional().default(0),
     height: z.number().min(0).optional().default(0),

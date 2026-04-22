@@ -5,7 +5,7 @@ export const permissionInsertSchema = z.object({
     code: z
         .string()
         .min(4, "Name minimum 4 characters")
-        .max(12, "Name maximum 12 characters"),
+        .max(24, "Name maximum 24 characters"),
     description: z.string().optional(),
     groupId: z.string().min(1, "Group is required"),
 });

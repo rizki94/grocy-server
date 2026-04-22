@@ -18,6 +18,8 @@ export const paymentInsertSchema = z.object({
         .min(0, "Total tidak boleh negatif"),
     status: z.enum(["draft", "posted"]).optional(),
     type: z.enum(["receivable", "payable"]),
+    reference: z.string().optional(),
+    note: z.string().optional(),
 });
 
 export const paymentWithLinesInsertSchema = paymentInsertSchema

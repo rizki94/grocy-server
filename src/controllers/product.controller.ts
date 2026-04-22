@@ -58,7 +58,6 @@ export async function getActiveProducts(req: Request, res: Response) {
                 unitId: productDetails.unitId,
                 unitName: sql<string>`COALESCE(${productUnits.name}, 'None')`,
                 baseRatio: sql<number>`COALESCE(${productDetails.baseRatio}, 1)`,
-                volume: sql<number>`COALESCE(${productDetails.volume}, 0)`,
                 cost: sql<number>`COALESCE(${productDetails.cost}, 0)`,
                 taxRate: sql<number>`COALESCE(${taxes.rate}, 0)`,
             })
@@ -171,6 +170,55 @@ export const getProductById = async (req: Request, res: Response) => {
     }
 };
 
+export const getProductByBarcode = async (req: Request, res: Response) => {
+    const { barcode } = req.params;
+
+    try {
+        const detail = await db
+            .select({
+                id: productDetails.id,
+                productId: products.id,
+                name: products.name,
+                barcode: productDetails.barcode,
+                skuId: productDetails.skuId,
+                unitId: productDetails.unitId,
+                unitName: productUnits.name,
+                baseRatio: productDetails.baseRatio,
+                cost: productDetails.cost,
+                taxRate: sql<number>`COALESCE(${taxes.rate}, 0)`,
+            })
+            .from(productDetails)
+            .innerJoin(products, eq(products.id, productDetails.productId))
+            .leftJoin(productUnits, eq(productUnits.id, productDetails.unitId))
+            .leftJoin(taxes, eq(taxes.id, products.taxId))
+            .where(
+                and(
+                    eq(products.isActive, true),
+                    or(
+                        eq(productDetails.barcode, barcode),
+                        eq(productDetails.skuId, barcode)
+                    )
+                )
+            )
+            .limit(1)
+            .then(r => r[0]);
+
+        if (!detail) {
+            return res.status(404).json({ message: "Product not found" });
+        }
+
+        const prices = await db
+            .select()
+            .from(productDetailPrices)
+            .where(eq(productDetailPrices.productDetailId, detail.id));
+
+        return res.json({ ...detail, prices });
+    } catch (err) {
+        console.error("GetProductByBarcode error:", err);
+        return res.status(500).json({ message: "Internal error" });
+    }
+};
+
 export const createProduct = async (req: Request, res: Response) => {
     const parsed = productWithDetailInsertSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -206,7 +254,6 @@ export const createProduct = async (req: Request, res: Response) => {
                     baseRatio: d.baseRatio,
                     cost: d.cost ?? 0,
                     weight: d.weight ?? 0,
-                    volume: d.volume ?? 0,
                     length: d.length ?? 0,
                     width: d.width ?? 0,
                     height: d.height ?? 0,
@@ -336,7 +383,6 @@ export const updateProduct = async (req: Request, res: Response) => {
                         baseRatio: d.baseRatio,
                         cost: d.cost ?? 0,
                         weight: d.weight ?? 0,
-                        volume: d.volume ?? 0,
                         length: d.length ?? 0,
                         width: d.width ?? 0,
                         height: d.height ?? 0,
@@ -358,7 +404,6 @@ export const updateProduct = async (req: Request, res: Response) => {
                         baseRatio: d.baseRatio,
                         cost: d.cost ?? 0,
                         weight: d.weight ?? 0,
-                        volume: d.volume ?? 0,
                         length: d.length ?? 0,
                         width: d.width ?? 0,
                         height: d.height ?? 0,

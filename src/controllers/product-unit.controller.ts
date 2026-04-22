@@ -61,6 +61,16 @@ export const createProductUnit = async (req: Request, res: Response) => {
     const productUnit = parsed.data;
 
     try {
+        const existingName = await db
+            .select()
+            .from(productUnits)
+            .where(eq(productUnits.name, productUnit.name ?? ""))
+            .then((res) => res[0]);
+
+        if (existingName) {
+            return res.status(409).json({ message: "Unit already exists" });
+        }
+
         const [createdUnit] = await db
             .insert(productUnits)
             .values(productUnit)
@@ -150,11 +160,11 @@ export const getPaginatedProductUnits = async (req: Request, res: Response) => {
         const search = (query.search as string) ?? "";
         const searchCondition = search
             ? or(
-                  like(
-                      sql`LOWER(${productUnits.name})`,
-                      `%${search.toLowerCase()}%`,
-                  ),
-              )
+                like(
+                    sql`LOWER(${productUnits.name})`,
+                    `%${search.toLowerCase()}%`,
+                ),
+            )
             : undefined;
 
         const sortColumns: Record<string, PgColumn> = {

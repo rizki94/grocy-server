@@ -1,6 +1,7 @@
 import { boolean, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { roles } from "./role.schema";
+import { glAccounts } from "./gl-account.schema";
 
 export const users = pgTable("users", {
     id: uuid("id").defaultRandom().primaryKey(),
@@ -10,6 +11,7 @@ export const users = pgTable("users", {
     roleId: uuid("role_id")
         .notNull()
         .references(() => roles.id),
+    cashGlAccountId: uuid("cash_gl_account_id").references(() => glAccounts.id),
     createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
