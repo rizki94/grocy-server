@@ -6,6 +6,7 @@ import customerRouter from "./routes/customer.route";
 import productRouter from "./routes/product.route";
 import purchaseRouter from "./routes/purchase.route";
 import supplierRouter from "./routes/supplier.route";
+import transferStockRouter from "./routes/stock-transfer.route";
 import uploadRouter from "./routes/upload.route";
 import productUnitRouter from "./routes/product-unit.route";
 import productAttributeRouter from "./routes/product-attribute.route";
@@ -27,6 +28,7 @@ import priceGroupRouter from "./routes/price-group.route";
 import posSessionRouter from "./routes/pos-session.route";
 import posRouter from "./routes/pos.route";
 import paymentMethodRouter from "./routes/payment-method.route";
+import settingRouter from "./routes/setting.route";
 
 export const route = Router();
 
@@ -51,6 +53,7 @@ route.use("/product-units", productUnitRouter);
 route.use("/product-attributes", productAttributeRouter);
 route.use("/purchases", purchaseRouter);
 route.use("/sales", salesRouter);
+route.use("/transfer-stocks", transferStockRouter);
 route.use("/stocks", stockRouter);
 route.use("/taxes", taxRouter);
 route.use("/files", uploadRouter);
@@ -65,3 +68,4 @@ route.use("/price-groups", priceGroupRouter);
 route.use("/pos-sessions", posSessionRouter);
 route.use("/pos", posRouter);
 route.use("/payment-methods", paymentMethodRouter);
+route.use("/settings", settingRouter);

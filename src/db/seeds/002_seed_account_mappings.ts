@@ -7,50 +7,37 @@ const defaultMappings = [
         type: "purchase",
         side: "debit",
         glAccountCode: "1400",
-        note: "pembelian masuk ke persediaan (Inventory)",
+        note: "Persediaan",
     },
     {
         type: "purchase",
         side: "credit",
         glAccountCode: "2100",
-        note: "pembelian masuk ke hutang usaha (AP)",
+        note: "Hutang Usaha",
     },
-
     {
         type: "sales",
         side: "debit",
         glAccountCode: "1300",
-        note: "penjualan ke piutang",
+        note: "Piutang Usaha",
     },
     {
         type: "sales",
         side: "credit",
         glAccountCode: "4100",
-        note: "penjualan ke pendapatan",
+        note: "Pendapatan Penjualan",
     },
     {
-        type: "sales_return",
-        side: "debit",
-        glAccountCode: "4100",
-        note: "retur penjualan mengurangi pendapatan",
-    },
-    {
-        type: "sales_return",
+        type: "sales_tax",
         side: "credit",
-        glAccountCode: "2100",
-        note: "retur penjualan menjadi hutang ke customer",
+        glAccountCode: "2200",
+        note: "PPN Keluaran",
     },
     {
-        type: "purchase_return",
+        type: "purchase_tax",
         side: "debit",
-        glAccountCode: "1300",
-        note: "retur pembelian menjadi piutang ke supplier",
-    },
-    {
-        type: "purchase_return",
-        side: "credit",
-        glAccountCode: "1400",
-        note: "retur pembelian mengurangi persediaan",
+        glAccountCode: "1500",
+        note: "PPN Masukan",
     },
 ] as const;
 
@@ -69,13 +56,23 @@ export async function seedAccountMappings(db: typeof import("..").db) {
             .limit(1);
 
         if (exists.length === 0) {
-            await db.insert(accountMappings).values(map);
+            await db.insert(accountMappings).values([map as any]);
             console.log(
                 `seeded mapping ${map.type}-${map.side}-${map.glAccountCode}`,
             );
         } else {
+            await db
+                .update(accountMappings)
+                .set({ note: map.note })
+                .where(
+                    and(
+                        eq(accountMappings.type, map.type),
+                        eq(accountMappings.glAccountCode, map.glAccountCode),
+                        eq(accountMappings.side, map.side),
+                    ),
+                );
             console.log(
-                `skipped mapping ${map.type}-${map.side}-${map.glAccountCode}`,
+                `updated mapping note for ${map.type}-${map.side}-${map.glAccountCode}`,
             );
         }
     }

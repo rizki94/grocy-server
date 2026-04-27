@@ -46,6 +46,13 @@ const glAccountsData: GlAccountSeedData[] = [
         parentCode: "1000",
         isActive: true,
     },
+    {
+        code: "1500",
+        name: "Prepaid Tax",
+        type: "asset",
+        parentCode: "1000",
+        isActive: true,
+    },
 
     // Liabilities
     {
@@ -58,6 +65,13 @@ const glAccountsData: GlAccountSeedData[] = [
     {
         code: "2100",
         name: "Accounts Payable",
+        type: "liability",
+        parentCode: "2000",
+        isActive: true,
+    },
+    {
+        code: "2200",
+        name: "Tax Payable",
         type: "liability",
         parentCode: "2000",
         isActive: true,
@@ -106,6 +120,13 @@ const glAccountsData: GlAccountSeedData[] = [
     {
         code: "5200",
         name: "Operating Expenses",
+        type: "expense",
+        parentCode: "5000",
+        isActive: true,
+    },
+    {
+        code: "5300",
+        name: "Rounding Difference",
         type: "expense",
         parentCode: "5000",
         isActive: true,

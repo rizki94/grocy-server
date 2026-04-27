@@ -223,11 +223,21 @@ export async function postPayment(id: string) {
             );
         }
 
+        const invoiceList = await tx
+            .select({ invoice: transactions.invoice })
+            .from(paymentLines)
+            .innerJoin(openInvoices, eq(paymentLines.openInvoiceId, openInvoices.id))
+            .innerJoin(transactions, eq(openInvoices.transactionId, transactions.id))
+            .where(eq(paymentLines.paymentId, id));
+
+        const concatenatedInvoices = invoiceList.map((i) => i.invoice).join(", ");
+        const paymentTypeName = payment.type === "payable" ? "Keluar" : "Masuk";
+
         const [journal] = await tx
             .insert(journals)
             .values({
                 date: payment.date,
-                description: payment.note || `Payment ${payment.type === "payable" ? "Out" : "In"} #${id}${payment.reference ? ` (${payment.reference})` : ""}`,
+                description: payment.note || `Pembayaran ${paymentTypeName} ${concatenatedInvoices}${payment.reference ? ` (${payment.reference})` : ""}`,
                 status: "posted",
                 transactionId: null,
             })
@@ -245,7 +255,7 @@ export async function postPayment(id: string) {
                 glAccountId: acc.glAccountId!,
                 debit: payment.type === "receivable" ? Number(acc.amount) : 0,
                 credit: payment.type === "payable" ? Number(acc.amount) : 0,
-                note: `Payment fund`,
+                note: `Penerimaan/Pengeluaran Kas/Bank ${concatenatedInvoices}`,
             });
         }
 
@@ -256,7 +266,7 @@ export async function postPayment(id: string) {
             debit: payment.type === "payable" ? Number(payment.totalAmount) : 0,
             credit:
                 payment.type === "receivable" ? Number(payment.totalAmount) : 0,
-            note: `Payment clearing ${payment.type}`,
+            note: `Pelunasan ${payment.type === "payable" ? "Hutang" : "Piutang"} ${concatenatedInvoices}`,
         });
 
         await tx

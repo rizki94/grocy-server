@@ -38,7 +38,7 @@ export const productDetails = pgTable("product_details", {
     barcode: text("barcode").unique(),
     level: smallint("level").notNull(),
     ratio: smallint("ratio").notNull(),
-    baseRatio: smallint("base_ratio").notNull(),
+    baseRatio: decimalAsNumber(10, 4)("base_ratio").notNull(),
     cost: decimalAsNumber(10, 2)("cost").notNull().default(0),
     weight: decimalAsNumber(10, 2)("weight").notNull().default(0),
     length: decimalAsNumber(10, 3)("length").notNull().default(0),

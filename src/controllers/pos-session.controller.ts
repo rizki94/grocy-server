@@ -3,9 +3,11 @@ import { posSessions, transactions, users } from "@/db/schemas";
 import { Request, Response } from "express";
 import { eq, and, isNull, desc, sql } from "drizzle-orm";
 import { logAction } from "@/utils/log-helper";
+import { getAccountBalance } from "@/repositories/gl-account.repository";
 
 export async function getAllSessions(req: Request, res: Response) {
     try {
+        const userId = req.user!.id;
         const data = await db
             .select({
                 id: posSessions.id,
@@ -19,6 +21,7 @@ export async function getAllSessions(req: Request, res: Response) {
             })
             .from(posSessions)
             .leftJoin(users, eq(users.id, posSessions.userId))
+            .where(eq(posSessions.userId, userId))
             .orderBy(desc(posSessions.openedAt));
 
         res.status(200).json(data);
@@ -38,7 +41,7 @@ export async function getSessionSummary(req: Request, res: Response) {
             .from(posSessions)
             .where(eq(posSessions.id, id))
             .limit(1)
-            .then(r => r[0]);
+            .then((r) => r[0]);
 
         if (!session) {
             return res.status(404).json({ message: "Session not found" });
@@ -54,7 +57,7 @@ export async function getSessionSummary(req: Request, res: Response) {
             })
             .from(transactions)
             .where(eq(transactions.posSessionId, id))
-            .then(r => r[0]);
+            .then((r) => r[0]);
 
         // 3. Get payment breakdown
         const paymentBreakdown = await db
@@ -76,7 +79,7 @@ export async function getSessionSummary(req: Request, res: Response) {
             session,
             summary,
             paymentBreakdown,
-            transactions: transactionsList
+            transactions: transactionsList,
         });
     } catch (error) {
         console.error("Error getting session summary:", error);
@@ -93,11 +96,11 @@ export async function getActiveSession(req: Request, res: Response) {
             .where(
                 and(
                     eq(posSessions.userId, userId),
-                    eq(posSessions.status, "open")
-                )
+                    eq(posSessions.status, "open"),
+                ),
             )
             .limit(1)
-            .then(r => r[0]);
+            .then((r) => r[0]);
 
         if (!session) {
             return res.status(200).json(null);
@@ -110,10 +113,31 @@ export async function getActiveSession(req: Request, res: Response) {
     }
 }
 
+export async function getOpeningBalance(req: Request, res: Response) {
+    try {
+        const userId = req.user!.id;
+        const user = await db
+            .select()
+            .from(users)
+            .where(eq(users.id, userId))
+            .limit(1)
+            .then((r) => r[0]);
+
+        let balance = 0;
+        if (user?.cashGlAccountId) {
+            balance = await getAccountBalance(user.cashGlAccountId);
+        }
+
+        res.status(200).json({ balance });
+    } catch (error) {
+        console.error("Error getting opening balance:", error);
+        res.status(500).json({ message: "Failed to get opening balance" });
+    }
+}
+
 export async function openSession(req: Request, res: Response) {
     try {
         const userId = req.user!.id;
-        const { openingBalance } = req.body;
 
         // Check if there's already an active session
         const existing = await db
@@ -122,21 +146,42 @@ export async function openSession(req: Request, res: Response) {
             .where(
                 and(
                     eq(posSessions.userId, userId),
-                    eq(posSessions.status, "open")
-                )
+                    eq(posSessions.status, "open"),
+                ),
             )
             .limit(1)
-            .then(r => r[0]);
+            .then((r) => r[0]);
 
         if (existing) {
-            return res.status(400).json({ message: "You already have an active session" });
+            return res
+                .status(400)
+                .json({ message: "You already have an active session" });
+        }
+
+        // Get user's cash GL account and its balance
+        const user = await db
+            .select()
+            .from(users)
+            .where(eq(users.id, userId))
+            .limit(1)
+            .then((r) => r[0]);
+
+        if (!user?.cashGlAccountId || !user?.posWarehouseId) {
+            return res.status(400).json({ 
+                message: "Setup POS belum lengkap. Silakan konfigurasi 'Akun GL Kas' dan 'Gudang POS' di pengaturan profil Anda." 
+            });
+        }
+
+        let openingBalance = 0;
+        if (user?.cashGlAccountId) {
+            openingBalance = await getAccountBalance(user.cashGlAccountId);
         }
 
         const [session] = await db
             .insert(posSessions)
             .values({
                 userId,
-                openingBalance: Number(openingBalance) || 0,
+                openingBalance,
                 status: "open",
                 openedAt: new Date(),
             })

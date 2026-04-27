@@ -2,6 +2,7 @@ import { db } from "..";
 import { seedGlAccounts } from "./001_seed_gl_accounts";
 import { seedAccountMappings } from "./002_seed_account_mappings";
 import { seedAccounts } from "./003_seed_accounts";
+import { seedSettings } from "./006_seed_settings";
 
 async function main() {
     console.log("Running seeds...");
@@ -9,6 +10,7 @@ async function main() {
     await seedGlAccounts(db);
     await seedAccountMappings(db);
     await seedAccounts(db);
+    await seedSettings(db);
 
     console.log("Seeding done");
     process.exit(0);

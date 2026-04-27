@@ -299,26 +299,46 @@ export const postSales = async (req: Request, res: Response) => {
             const mappings = await tx
                 .select()
                 .from(accountMappings)
-                .where(eq(accountMappings.type, "sales"));
+                .where(
+                    or(
+                        eq(accountMappings.type, "sales"),
+                        eq(accountMappings.type, "sales_tax"),
+                    ),
+                );
 
             const [journal] = await tx
                 .insert(journals)
                 .values({
                     transactionId: sales.id,
                     date: sales.date,
-                    description: `Posting penjualan #${sales.invoice}`,
+                    description: `Penjualan ${sales.invoice}`,
                     status: "posted",
                 })
                 .returning();
 
             for (const map of mappings) {
+                let amount = 0;
+                const totalAmount = Number(sales.totalAmount);
+                const totalTax = Number(sales.totalTax || 0);
+
+                if (map.type === "sales") {
+                    if (map.side === "debit") {
+                        amount = totalAmount; // AR
+                    } else {
+                        amount = totalAmount - totalTax; // Revenue (subtotal)
+                    }
+                } else if (map.type === "sales_tax") {
+                    amount = totalTax; // Tax
+                }
+
+                if (amount === 0) continue;
+
                 await tx.insert(journalEntries).values({
                     journalId: journal.id,
                     glAccountId: await findGlAccountByCode(map.glAccountCode),
-                    debit: map.side === "debit" ? Number(sales.totalAmount) : 0,
-                    credit:
-                        map.side === "credit" ? Number(sales.totalAmount) : 0,
-                    note: map.note,
+                    debit: map.side === "debit" ? amount : 0,
+                    credit: map.side === "credit" ? amount : 0,
+                    note: `${map.note} ${sales.invoice}`,
                 });
             }
 
@@ -339,14 +359,14 @@ export const postSales = async (req: Request, res: Response) => {
                     glAccountId: await findGlAccountByCode("5100"),
                     debit: totalCogs,
                     credit: 0,
-                    note: `COGS for #${sales.invoice}`,
+                    note: `Beban Pokok Penjualan ${sales.invoice}`,
                 });
                 await tx.insert(journalEntries).values({
                     journalId: journal.id,
                     glAccountId: await findGlAccountByCode("1400"),
                     debit: 0,
                     credit: totalCogs,
-                    note: `Inventory reduction for #${sales.invoice}`,
+                    note: `Pengurangan Persediaan ${sales.invoice}`,
                 });
             }
 

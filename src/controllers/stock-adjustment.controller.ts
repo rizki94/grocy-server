@@ -59,6 +59,7 @@ export const createAdjustment = async (req: Request, res: Response) => {
     }
 
     const adjustment = parsed.data;
+    console.log("[createAdjustment] Data:", JSON.stringify(adjustment, null, 2));
     const invoice = await generateInvoice("adjustment");
 
     try {
@@ -76,7 +77,18 @@ export const createAdjustment = async (req: Request, res: Response) => {
         for (const detail of adjustment.details) {
             await db.insert(transactionDetails).values({
                 transactionId: created.id,
-                ...detail,
+                productId: detail.productId,
+                productDetailId: detail.productDetailId,
+                warehouseId: detail.warehouseId,
+                baseRatio: detail.baseRatio,
+                qty: detail.qty,
+                price: detail.price,
+                discount: detail.discount,
+                amount: detail.amount,
+                unitCost: detail.unitCost,
+                totalCost: detail.totalCost,
+                taxRate: detail.taxRate,
+                movementType: detail.movementType,
             });
         }
 
@@ -98,6 +110,7 @@ export const createAdjustment = async (req: Request, res: Response) => {
 };
 
 export const updateAdjustment = async (req: Request, res: Response) => {
+    console.log("[updateAdjustment] Raw Body:", JSON.stringify(req.body, null, 2));
     const parsed = transactionWithDetailUpdateSchema.safeParse(req.body);
     if (!parsed.success) {
         return res.status(400).json({
@@ -107,6 +120,7 @@ export const updateAdjustment = async (req: Request, res: Response) => {
     }
 
     const adjustment = parsed.data;
+    console.log("[updateAdjustment][V2] Data:", JSON.stringify(adjustment, null, 2));
     try {
         const [updated] = await db
             .update(transactions)
@@ -144,7 +158,18 @@ export const updateAdjustment = async (req: Request, res: Response) => {
         for (const detail of adjustment.details) {
             await db.insert(transactionDetails).values({
                 transactionId: updated.id,
-                ...detail,
+                productId: detail.productId,
+                productDetailId: detail.productDetailId,
+                warehouseId: detail.warehouseId,
+                baseRatio: detail.baseRatio,
+                qty: detail.qty,
+                price: detail.price,
+                discount: detail.discount,
+                amount: detail.amount,
+                unitCost: detail.unitCost,
+                totalCost: detail.totalCost,
+                taxRate: detail.taxRate,
+                movementType: detail.movementType,
             });
         }
 
@@ -250,7 +275,7 @@ export const postAdjustment = async (req: Request, res: Response) => {
                 .values({
                     transactionId: adjustment.id,
                     date: adjustment.date,
-                    description: `Stock Adjustment #${adjustment.invoice}`,
+                    description: `Penyesuaian Stok ${adjustment.invoice}`,
                     status: "posted",
                 })
                 .returning();
@@ -271,14 +296,14 @@ export const postAdjustment = async (req: Request, res: Response) => {
                     glAccountId: inventoryAccount,
                     debit: totalIn,
                     credit: 0,
-                    note: `Stock In (Adjustment #${adjustment.invoice})`,
+                    note: `Penyesuaian Stok Masuk ${adjustment.invoice}`,
                 });
                 await tx.insert(journalEntries).values({
                     journalId: journal.id,
                     glAccountId: adjustmentAccount,
                     debit: 0,
                     credit: totalIn,
-                    note: `Stock In (Adjustment #${adjustment.invoice})`,
+                    note: `Penyesuaian Stok Masuk ${adjustment.invoice}`,
                 });
             }
 
@@ -289,14 +314,14 @@ export const postAdjustment = async (req: Request, res: Response) => {
                     glAccountId: adjustmentAccount,
                     debit: totalOut,
                     credit: 0,
-                    note: `Stock Out (Adjustment #${adjustment.invoice})`,
+                    note: `Penyesuaian Stok Keluar ${adjustment.invoice}`,
                 });
                 await tx.insert(journalEntries).values({
                     journalId: journal.id,
                     glAccountId: inventoryAccount,
                     debit: 0,
                     credit: totalOut,
-                    note: `Stock Out (Adjustment #${adjustment.invoice})`,
+                    note: `Penyesuaian Stok Keluar ${adjustment.invoice}`,
                 });
             }
             console.log(`[postAdjustment] Journal entries created.`);
@@ -324,6 +349,8 @@ export const getPaginatedAdjustments = async (req: Request, res: Response) => {
         const { search, sort, order, pageIndex, pageSize, offset, from, to } =
             parseTableQuery(req.query);
 
+        const status = req.query.status as "draft" | "order" | "posted" | "partial" | "paid" | "cancelled" | undefined;
+
         const searchCondition = search
             ? or(
                 like(
@@ -345,6 +372,10 @@ export const getPaginatedAdjustments = async (req: Request, res: Response) => {
                 )
                 : undefined;
 
+        const statusCondition = status
+            ? eq(transactions.status, status)
+            : undefined;
+
         const sortColumns: Record<string, PgColumn> = {
             invoice: transactions.invoice,
             date: transactions.date,
@@ -360,6 +391,7 @@ export const getPaginatedAdjustments = async (req: Request, res: Response) => {
                         eq(transactions.type, "adjustment"),
                         searchCondition,
                         dateCondition,
+                        statusCondition,
                     ),
                 )
                 .orderBy(order === "desc" ? desc(sortColumn) : desc(sortColumn))
@@ -373,6 +405,7 @@ export const getPaginatedAdjustments = async (req: Request, res: Response) => {
                         eq(transactions.type, "adjustment"),
                         searchCondition,
                         dateCondition,
+                        statusCondition,
                     ),
                 ),
         ]);

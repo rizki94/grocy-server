@@ -52,6 +52,7 @@ export async function seedAccounts(dbInstance: typeof db) {
         { name: "Accounting Management", code: "accounting" },
         { name: "Report & Analytics", code: "report" },
         { name: "Settings & Setup", code: "settings" },
+        { name: "Point of Sale", code: "pos" },
     ];
 
     const permissionGroupsMap: Record<string, string> = {}; // code -> id
@@ -110,6 +111,11 @@ export async function seedAccounts(dbInstance: typeof db) {
         { code: "transaction.sales.post", description: "Post Sales", group: "transaction" },
 
         { code: "transaction.adjustment.view", description: "View Adjustment", group: "transaction" },
+        { code: "transaction.transfer_stock.view", description: "View Transfer Stock", group: "transaction" },
+        { code: "transaction.transfer_stock.create", description: "Create Transfer Stock", group: "transaction" },
+        { code: "transaction.transfer_stock.update", description: "Update Transfer Stock", group: "transaction" },
+        { code: "transaction.transfer_stock.delete", description: "Delete Transfer Stock", group: "transaction" },
+        { code: "transaction.transfer_stock.post", description: "Post Transfer Stock", group: "transaction" },
         { code: "transaction.adjustment.create", description: "Create Adjustment", group: "transaction" },
         { code: "transaction.adjustment.post", description: "Post Adjustment", group: "transaction" },
 
@@ -131,6 +137,7 @@ export async function seedAccounts(dbInstance: typeof db) {
         { code: "report.profit_loss.view", description: "View Profit & Loss", group: "report" },
         { code: "report.balance_sheet.view", description: "View Balance Sheet", group: "report" },
         { code: "report.product_profitability.view", description: "View Product Profitability", group: "report" },
+        { code: "report.gl_balance.view", description: "View GL Balances", group: "report" },
 
         // Settings
         { code: "settings.role.view", description: "View Roles", group: "settings" },
@@ -144,6 +151,9 @@ export async function seedAccounts(dbInstance: typeof db) {
 
         { code: "settings.unit.view", description: "View Units", group: "settings" },
         { code: "settings.unit.create", description: "Create Unit", group: "settings" },
+
+        // POS
+        { code: "pos.interface.view", description: "View POS Interface", group: "pos" },
     ];
 
     const insertedPermissions: (typeof permissions.$inferSelect)[] = [];

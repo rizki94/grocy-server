@@ -6,6 +6,7 @@ import {
     stockMovements,
     stocks,
     transactionDetails,
+    settings,
 } from "@/db/schemas";
 import { sql, eq, and, gt, asc } from "drizzle-orm";
 
@@ -23,6 +24,9 @@ export async function updateStockForTransaction(
     tx?: any, // Optional transaction context
 ) {
     const run = async (tx: any) => {
+        const globalSettings = await tx.select().from(settings).where(eq(settings.id, "global")).limit(1).then((r: any[]) => r[0]);
+        const allowNegativeStock = globalSettings?.allowNegativeStock || false;
+
         for (const detail of details) {
             const baseQty = detail.qty * detail.baseRatio;
 
@@ -122,10 +126,17 @@ export async function updateStockForTransaction(
                         .select({ name: products.name })
                         .from(products)
                         .where(eq(products.id, detail.productId));
-                    throw new Error(
-                        `Insufficient stock for product: ${product?.name || detail.productId
-                        }`,
-                    );
+                    
+                    if (!allowNegativeStock) {
+                        throw new Error(
+                            `Insufficient stock for product: ${product?.name || detail.productId}`,
+                        );
+                    } else {
+                        // Allow negative stock: use detail.unitCost for the missing quantity
+                        totalCost += remaining * (detail.unitCost || 0);
+                        totalUsedQty += remaining;
+                        remaining = 0;
+                    }
                 }
 
                 const avgCost = totalUsedQty > 0 ? totalCost / totalUsedQty : 0;

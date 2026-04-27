@@ -8,7 +8,7 @@ import {
     transactionDetails,
     transactions,
 } from "@/db/schemas";
-import { and, eq, sql, gte, lte, desc, inArray } from "drizzle-orm";
+import { and, eq, sql, gte, lte, desc, inArray, asc } from "drizzle-orm";
 
 export const getProfitLoss = async (req: Request, res: Response) => {
     try {
@@ -216,5 +216,68 @@ export const getProductProfitability = async (req: Request, res: Response) => {
     } catch (error: any) {
         console.error("Product Profitability Error:", error);
         res.status(500).json({ message: "Failed to generate report", error: error.message });
+    }
+};
+
+export const getGlBalances = async (req: Request, res: Response) => {
+    try {
+        const { from, to } = req.query;
+        let dateCondition = undefined;
+
+        if (from && to) {
+            const fromDate = (from as string).split("T")[0];
+            const toDate = (to as string).split("T")[0];
+            dateCondition = and(
+                gte(sql`DATE(${journals.date})`, fromDate),
+                lte(sql`DATE(${journals.date})`, toDate)
+            );
+        } else {
+            // Default to current month if no dates provided
+            const fromDate = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+                .toISOString()
+                .split("T")[0];
+            const toDate = new Date().toISOString().split("T")[0];
+            dateCondition = and(
+                gte(sql`DATE(${journals.date})`, fromDate),
+                lte(sql`DATE(${journals.date})`, toDate)
+            );
+        }
+
+        const report = await db
+            .select({
+                id: glAccounts.id,
+                code: glAccounts.code,
+                name: glAccounts.name,
+                type: glAccounts.type,
+                isActive: glAccounts.isActive,
+                debit: sql<number>`COALESCE(sum(${journalEntries.debit}), 0)`,
+                credit: sql<number>`COALESCE(sum(${journalEntries.credit}), 0)`,
+            })
+            .from(glAccounts)
+            .leftJoin(
+                journalEntries,
+                eq(journalEntries.glAccountId, glAccounts.id)
+            )
+            .leftJoin(
+                journals,
+                and(
+                    eq(journalEntries.journalId, journals.id),
+                    eq(journals.status, "posted"),
+                    dateCondition
+                )
+            )
+            .groupBy(
+                glAccounts.id,
+                glAccounts.code,
+                glAccounts.name,
+                glAccounts.type,
+                glAccounts.isActive
+            )
+            .orderBy(asc(glAccounts.code));
+
+        res.status(200).json(report);
+    } catch (error) {
+        console.error("Error generating GL Balances:", error);
+        res.status(500).json({ message: "Failed to generate report" });
     }
 };

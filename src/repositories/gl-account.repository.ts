@@ -1,6 +1,6 @@
 import { db } from "@/db";
-import { glAccounts } from "@/db/schemas";
-import { eq, sql } from "drizzle-orm";
+import { glAccounts, journalEntries, journals } from "@/db/schemas";
+import { and, eq, sql } from "drizzle-orm";
 
 export async function findGlAccountByCode(code: string) {
     const result = await db
@@ -22,4 +22,37 @@ export async function findLeafGlAccounts() {
         WHERE child.parent_id = ${glAccounts.id}
       )`
         );
+}
+
+export async function getAccountBalance(glAccountId: string) {
+    const account = await db
+        .select()
+        .from(glAccounts)
+        .where(eq(glAccounts.id, glAccountId))
+        .limit(1)
+        .then((r) => r[0]);
+    if (!account) return 0;
+
+    const result = await db
+        .select({
+            debit: sql<number>`COALESCE(sum(${journalEntries.debit}), 0)`,
+            credit: sql<number>`COALESCE(sum(${journalEntries.credit}), 0)`,
+        })
+        .from(journalEntries)
+        .innerJoin(journals, eq(journalEntries.journalId, journals.id))
+        .where(
+            and(
+                eq(journalEntries.glAccountId, glAccountId),
+                eq(journals.status, "posted"),
+            ),
+        )
+        .then((r) => r[0]);
+
+    if (!result) return 0;
+
+    if (["asset", "expense"].includes(account.type)) {
+        return Number(result.debit) - Number(result.credit);
+    } else {
+        return Number(result.credit) - Number(result.debit);
+    }
 }

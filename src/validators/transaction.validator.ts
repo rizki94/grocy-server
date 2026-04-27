@@ -30,6 +30,7 @@ const transactionDetailBaseSchema = z.object({
     totalCost: z.number(),
     amount: z.number(),
     taxRate: z.number(),
+    movementType: z.number(),
 });
 
 export const transactionDetailInsertSchema = transactionDetailBaseSchema.refine(
@@ -53,6 +54,7 @@ export const transactionUpdateSchema = transactionInsertSchema.extend({
 export const transactionDetailUpdateSchema = transactionDetailBaseSchema
     .extend({
         id: z.string().optional(),
+        movementType: z.number(),
     })
     .refine((data) => data.discount <= data.price, {
         message: "Discount cannot be larger than price",

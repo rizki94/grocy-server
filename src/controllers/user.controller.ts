@@ -200,6 +200,8 @@ export const getPaginatedUsers = async (req: Request, res: Response) => {
                     username: users.username,
                     role: roles.name,
                     isActive: users.isActive,
+                    cashGlAccountId: users.cashGlAccountId,
+                    posWarehouseId: users.posWarehouseId,
                 })
                 .from(users)
                 .innerJoin(roles, eq(roles.id, users.roleId))
@@ -225,5 +227,44 @@ export const getPaginatedUsers = async (req: Request, res: Response) => {
     } catch (error) {
         console.error("Error fetching users:", error);
         res.status(500).json({ message: "Failed to fetch users" });
+    }
+};
+
+export const updateUserPosSetup = async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { cashGlAccountId, posWarehouseId } = req.body;
+
+    try {
+        const oldUser = await db
+            .select()
+            .from(users)
+            .where(eq(users.id, id))
+            .limit(1)
+            .then((r) => r[0]);
+
+        if (!oldUser) return res.status(404).json({ message: "User not found" });
+
+        const [updatedUser] = await db
+            .update(users)
+            .set({ cashGlAccountId, posWarehouseId })
+            .where(eq(users.id, id))
+            .returning();
+
+        logAction(req, {
+            action: "update",
+            table: "users",
+            oldData: oldUser,
+            data: updatedUser,
+            userId: req.user!.id,
+            msg: `updated POS setup for user #${id}`,
+        });
+
+        return res.status(200).json({
+            message: "POS Setup updated successfully",
+            user: updatedUser,
+        });
+    } catch (error) {
+        console.error("Error updating POS setup:", error);
+        return res.status(500).json({ message: "Failed to update POS setup" });
     }
 };

@@ -293,7 +293,7 @@ export const postSalesReturn = async (req: Request, res: Response) => {
                 .values({
                     transactionId: sales.id,
                     date: sales.date,
-                    description: `Retur Penjualan #${sales.invoice}`,
+                    description: `Retur Penjualan ${sales.invoice}`,
                     status: "posted",
                 })
                 .returning();
@@ -305,7 +305,7 @@ export const postSalesReturn = async (req: Request, res: Response) => {
                     debit: map.side === "debit" ? Number(sales.totalAmount) : 0,
                     credit:
                         map.side === "credit" ? Number(sales.totalAmount) : 0,
-                    note: map.note,
+                    note: `${map.note} ${sales.invoice}`,
                 });
             }
 

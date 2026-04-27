@@ -300,29 +300,46 @@ export const postPurchase = async (req: Request, res: Response) => {
             const mappings = await tx
                 .select()
                 .from(accountMappings)
-                .where(eq(accountMappings.type, "purchase"));
+                .where(
+                    or(
+                        eq(accountMappings.type, "purchase"),
+                        eq(accountMappings.type, "purchase_tax"),
+                    ),
+                );
 
             const [journal] = await tx
                 .insert(journals)
                 .values({
                     transactionId: purchase.id,
                     date: purchase.date,
-                    description: `Posting pembelian #${purchase.invoice}`,
+                    description: `Pembelian ${purchase.invoice}`,
                     status: "posted",
                 })
                 .returning();
 
             for (const map of mappings) {
+                let amount = 0;
+                const totalAmount = Number(purchase.totalAmount);
+                const totalTax = Number(purchase.totalTax || 0);
+
+                if (map.type === "purchase") {
+                    if (map.side === "credit") {
+                        amount = totalAmount; // AP
+                    } else {
+                        amount = totalAmount - totalTax; // Inventory (subtotal)
+                    }
+                } else if (map.type === "purchase_tax") {
+                    amount = totalTax; // Tax
+                }
+
+                if (amount === 0) continue;
+
                 await tx.insert(journalEntries).values({
                     journalId: journal.id,
                     glAccountId: await findGlAccountByCode(map.glAccountCode),
-                    debit:
-                        map.side === "debit" ? Number(purchase.totalAmount) : 0,
-                    credit:
-                        map.side === "credit"
-                            ? Number(purchase.totalAmount)
-                            : 0,
-                    note: map.note,
+                    debit: map.side === "debit" ? amount : 0,
+                    credit: map.side === "credit" ? amount : 0,
+                    note: `${map.note} ${purchase.invoice}`,
                 });
             }
 

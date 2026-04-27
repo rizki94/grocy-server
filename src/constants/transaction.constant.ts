@@ -15,6 +15,9 @@ export const transactionTypes = [
     "transfer_stock",
     "adjustment",
     "pos_sales",
+    "pos_sales_tax",
+    "sales_tax",
+    "purchase_tax",
 ] as const;
 
 export type TransactionType = (typeof transactionTypes)[number];
@@ -38,4 +41,7 @@ export const typeMap: Record<(typeof transactionTypes)[number], "IN" | "OUT"> =
     transfer_stock: "IN",
     adjustment: "IN",
     pos_sales: "OUT",
+    pos_sales_tax: "OUT",
+    sales_tax: "OUT",
+    purchase_tax: "IN",
 };

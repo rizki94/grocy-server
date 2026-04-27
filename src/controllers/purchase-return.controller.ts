@@ -292,7 +292,7 @@ export const postPurchaseReturn = async (req: Request, res: Response) => {
                 .values({
                     transactionId: purchase.id,
                     date: purchase.date,
-                    description: `Retur Pembelian #${purchase.invoice}`,
+                    description: `Retur Pembelian ${purchase.invoice}`,
                     status: "posted",
                 })
                 .returning();
@@ -307,7 +307,7 @@ export const postPurchaseReturn = async (req: Request, res: Response) => {
                         map.side === "credit"
                             ? Number(purchase.totalAmount)
                             : 0,
-                    note: map.note,
+                    note: `${map.note} ${purchase.invoice}`,
                 });
             }
 

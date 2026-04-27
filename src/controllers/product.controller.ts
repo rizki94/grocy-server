@@ -50,6 +50,8 @@ export async function getAllProducts(req: Request, res: Response) {
 
 export async function getActiveProducts(req: Request, res: Response) {
     try {
+        const isSellableOnly = req.query.sellable === "true";
+
         const data = await db
             .select({
                 id: products.id,
@@ -65,7 +67,12 @@ export async function getActiveProducts(req: Request, res: Response) {
             .innerJoin(productDetails, eq(productDetails.productId, products.id))
             .leftJoin(productUnits, eq(productUnits.id, productDetails.unitId))
             .leftJoin(taxes, eq(taxes.id, products.taxId))
-            .where(eq(products.isActive, true))
+            .where(
+                and(
+                    eq(products.isActive, true),
+                    isSellableOnly ? eq(productDetails.isSellable, true) : undefined
+                )
+            )
             .orderBy(products.name);
 
         const productDetailIds = data
@@ -194,6 +201,7 @@ export const getProductByBarcode = async (req: Request, res: Response) => {
             .where(
                 and(
                     eq(products.isActive, true),
+                    eq(productDetails.isSellable, true),
                     or(
                         eq(productDetails.barcode, barcode),
                         eq(productDetails.skuId, barcode)
