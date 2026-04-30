@@ -13,14 +13,14 @@ type GlAccountSeedData = {
 const glAccountsData: GlAccountSeedData[] = [
     {
         code: "1000",
-        name: "Assets",
+        name: "Aset",
         type: "asset",
         parentCode: null,
         isActive: true,
     },
     {
         code: "1100",
-        name: "Cash",
+        name: "Kas",
         type: "asset",
         parentCode: "1000",
         isActive: true,
@@ -34,21 +34,21 @@ const glAccountsData: GlAccountSeedData[] = [
     },
     {
         code: "1300",
-        name: "Accounts Receivable",
+        name: "Piutang Usaha",
         type: "asset",
         parentCode: "1000",
         isActive: true,
     },
     {
         code: "1400",
-        name: "Inventory",
+        name: "Persediaan",
         type: "asset",
         parentCode: "1000",
         isActive: true,
     },
     {
         code: "1500",
-        name: "Prepaid Tax",
+        name: "Pajak Dibayar di Muka",
         type: "asset",
         parentCode: "1000",
         isActive: true,
@@ -57,21 +57,21 @@ const glAccountsData: GlAccountSeedData[] = [
     // Liabilities
     {
         code: "2000",
-        name: "Liabilities",
+        name: "Kewajiban",
         type: "liability",
         parentCode: null,
         isActive: true,
     },
     {
         code: "2100",
-        name: "Accounts Payable",
+        name: "Hutang Usaha",
         type: "liability",
         parentCode: "2000",
         isActive: true,
     },
     {
         code: "2200",
-        name: "Tax Payable",
+        name: "Hutang Pajak",
         type: "liability",
         parentCode: "2000",
         isActive: true,
@@ -80,7 +80,7 @@ const glAccountsData: GlAccountSeedData[] = [
     // Equity
     {
         code: "3000",
-        name: "Equity",
+        name: "Ekuitas",
         type: "equity",
         parentCode: null,
         isActive: true,
@@ -89,14 +89,14 @@ const glAccountsData: GlAccountSeedData[] = [
     // Income
     {
         code: "4000",
-        name: "Income",
+        name: "Pendapatan",
         type: "income",
         parentCode: null,
         isActive: true,
     },
     {
         code: "4100",
-        name: "Sales Revenue",
+        name: "Pendapatan Penjualan",
         type: "income",
         parentCode: "4000",
         isActive: true,
@@ -105,28 +105,28 @@ const glAccountsData: GlAccountSeedData[] = [
     // Expenses
     {
         code: "5000",
-        name: "Expenses",
+        name: "Beban",
         type: "expense",
         parentCode: null,
         isActive: true,
     },
     {
         code: "5100",
-        name: "Cost of Goods Sold",
+        name: "Harga Pokok Penjualan (HPP)",
         type: "expense",
         parentCode: "5000",
         isActive: true,
     },
     {
         code: "5200",
-        name: "Operating Expenses",
+        name: "Beban Operasional",
         type: "expense",
         parentCode: "5000",
         isActive: true,
     },
     {
         code: "5300",
-        name: "Rounding Difference",
+        name: "Selisih Pembulatan",
         type: "expense",
         parentCode: "5000",
         isActive: true,

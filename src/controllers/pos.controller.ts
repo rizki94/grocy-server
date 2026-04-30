@@ -168,7 +168,7 @@ export async function checkout(req: Request, res: Response) {
                 .values({
                     transactionId: transaction.id,
                     date: transaction.date,
-                    description: `Penjualan POS ${transaction.invoice}`,
+                    description: `Penjualan ${transaction.invoice}`,
                     status: "posted",
                 })
                 .returning();
@@ -327,7 +327,7 @@ export async function checkout(req: Request, res: Response) {
                         .values({
                             transactionId: transaction.id,
                             date: payment.date,
-                            description: `Pembayaran POS ${transaction.invoice}`,
+                            description: `Pembayaran ${transaction.invoice}`,
                             status: "posted",
                         })
                         .returning();

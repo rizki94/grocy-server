@@ -12,6 +12,10 @@ import {
     contacts,
     products,
     productDetails,
+    warehouses,
+    priceGroups,
+    productAttributes,
+    productAttributeValues,
 } from "../schemas";
 
 export async function seedAccounts(dbInstance: typeof db) {
@@ -92,10 +96,12 @@ export async function seedAccounts(dbInstance: typeof db) {
             group: "product",
         },
         // Contact
-        { code: "contact.view", description: "View Contacts", group: "contact" },
-        { code: "contact.create", description: "Create Contact", group: "contact" },
-        { code: "contact.update", description: "Update Contact", group: "contact" },
-        { code: "contact.delete", description: "Delete Contact", group: "contact" },
+        { code: "contact.customer.view", description: "View Customers", group: "contact" },
+        { code: "contact.customer.create", description: "Create Customer", group: "contact" },
+        { code: "contact.customer.update", description: "Update Customer", group: "contact" },
+        { code: "contact.supplier.view", description: "View Suppliers", group: "contact" },
+        { code: "contact.supplier.create", description: "Create Supplier", group: "contact" },
+        { code: "contact.supplier.update", description: "Update Supplier", group: "contact" },
 
         // Transactions
         { code: "transaction.purchase.view", description: "View Purchase", group: "transaction" },
@@ -151,6 +157,18 @@ export async function seedAccounts(dbInstance: typeof db) {
 
         { code: "settings.unit.view", description: "View Units", group: "settings" },
         { code: "settings.unit.create", description: "Create Unit", group: "settings" },
+
+        { code: "settings.warehouse.view", description: "View Warehouses", group: "settings" },
+        { code: "settings.warehouse.create", description: "Create Warehouse", group: "settings" },
+        { code: "settings.warehouse.update", description: "Update Warehouse", group: "settings" },
+
+        { code: "settings.price_group.view", description: "View Price Groups", group: "settings" },
+        { code: "settings.price_group.create", description: "Create Price Group", group: "settings" },
+        { code: "settings.price_group.update", description: "Update Price Group", group: "settings" },
+
+        { code: "settings.payment_method.view", description: "View Payment Methods", group: "settings" },
+        { code: "settings.payment_method.create", description: "Create Payment Method", group: "settings" },
+        { code: "settings.payment_method.update", description: "Update Payment Method", group: "settings" },
 
         // POS
         { code: "pos.interface.view", description: "View POS Interface", group: "pos" },
@@ -259,6 +277,47 @@ export async function seedAccounts(dbInstance: typeof db) {
             description: "Fresh mineral water",
             taxId: tax.id,
             isActive: true,
+        },
+    );
+
+    // 8. Warehouses
+    await getOrCreate(warehouses, eq(warehouses.name, "Regular Warehouse"), {
+        name: "Regular Warehouse",
+        address: "-",
+        phone: "-",
+        isActive: true,
+    });
+
+    // 9. Price Groups
+    await getOrCreate(priceGroups, eq(priceGroups.name, "Regular Price"), {
+        name: "Regular Price",
+        description: "Regular price for retail customers",
+        isActive: true,
+    });
+
+    // 10. Product Attributes
+    const categoryAttr = await getOrCreate<typeof productAttributes.$inferSelect>(
+        productAttributes,
+        eq(productAttributes.name, "Category"),
+        {
+            name: "Category",
+            label: "category",
+            type: "enum",
+            options: ["default category"],
+        },
+    );
+
+    // Assign attribute to product
+    await getOrCreate(
+        productAttributeValues,
+        and(
+            eq(productAttributeValues.productId, product.id),
+            eq(productAttributeValues.attributeId, categoryAttr.id),
+        ),
+        {
+            productId: product.id,
+            attributeId: categoryAttr.id,
+            value: "default category",
         },
     );
 
