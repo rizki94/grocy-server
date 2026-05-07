@@ -1,9 +1,11 @@
 import { Request, Response } from "express";
 import { db } from "@/db";
 import {
+    contacts,
     glAccounts,
     journalEntries,
     journals,
+    openInvoices,
     products,
     transactionDetails,
     transactions,
@@ -279,5 +281,39 @@ export const getGlBalances = async (req: Request, res: Response) => {
     } catch (error) {
         console.error("Error generating GL Balances:", error);
         res.status(500).json({ message: "Failed to generate report" });
+    }
+};
+
+export const getCustomerOutstandingAr = async (req: Request, res: Response) => {
+    try {
+        const { to } = req.query;
+        const toDate = to
+            ? (to as string).split("T")[0]
+            : new Date().toISOString().split("T")[0];
+
+        const report = await db
+            .select({
+                customerId: contacts.id,
+                customerName: contacts.name,
+                totalAmount: sql<number>`COALESCE(sum(${openInvoices.amount}), 0)`,
+                paidAmount: sql<number>`COALESCE(sum(${openInvoices.paidAmount}), 0)`,
+                remainingAmount: sql<number>`COALESCE(sum(${openInvoices.amount} - ${openInvoices.paidAmount}), 0)`,
+            })
+            .from(contacts)
+            .innerJoin(openInvoices, eq(contacts.id, openInvoices.contactId))
+            .where(
+                and(
+                    eq(openInvoices.type, "receivable"),
+                    lte(openInvoices.dueDate, toDate),
+                    sql`${openInvoices.amount} - ${openInvoices.paidAmount} > 0`,
+                ),
+            )
+            .groupBy(contacts.id, contacts.name)
+            .orderBy(desc(sql`sum(${openInvoices.amount} - ${openInvoices.paidAmount})`));
+
+        res.json(report);
+    } catch (error: any) {
+        console.error("Customer Outstanding AR Error:", error);
+        res.status(500).json({ message: "Failed to generate report", error: error.message });
     }
 };
