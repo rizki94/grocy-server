@@ -1,5 +1,5 @@
 import { db } from "@/db";
-import { transactions, stocks, openInvoices } from "@/db/schemas";
+import { transactions, stocks, openInvoices, products } from "@/db/schemas";
 import { and, eq, gte, sql, desc } from "drizzle-orm";
 import { Request, Response } from "express";
 
@@ -18,16 +18,22 @@ export const getDashboardStats = async (req: Request, res: Response) => {
             0,
         );
 
-        // Sales stats
+        // Sales stats (Net: Sales + POS - Returns)
         const [salesThisMonth] = await db
             .select({
                 count: sql<number>`count(*)`,
-                total: sql<number>`COALESCE(sum(${transactions.totalAmount}), 0)`,
+                total: sql<number>`SUM(
+                    CASE 
+                        WHEN ${transactions.type} IN ('sales', 'pos_sales') THEN ${transactions.totalAmount}
+                        WHEN ${transactions.type} = 'sales_return' THEN -${transactions.totalAmount}
+                        ELSE 0 
+                    END
+                )`,
             })
             .from(transactions)
             .where(
                 and(
-                    eq(transactions.type, "sales"),
+                    sql`${transactions.type} IN ('sales', 'pos_sales', 'sales_return')`,
                     eq(transactions.status, "posted"),
                     gte(
                         transactions.date,
@@ -38,12 +44,18 @@ export const getDashboardStats = async (req: Request, res: Response) => {
 
         const [salesLastMonth] = await db
             .select({
-                total: sql<number>`COALESCE(sum(${transactions.totalAmount}), 0)`,
+                total: sql<number>`SUM(
+                    CASE 
+                        WHEN ${transactions.type} IN ('sales', 'pos_sales') THEN ${transactions.totalAmount}
+                        WHEN ${transactions.type} = 'sales_return' THEN -${transactions.totalAmount}
+                        ELSE 0 
+                    END
+                )`,
             })
             .from(transactions)
             .where(
                 and(
-                    eq(transactions.type, "sales"),
+                    sql`${transactions.type} IN ('sales', 'pos_sales', 'sales_return')`,
                     eq(transactions.status, "posted"),
                     gte(
                         transactions.date,
@@ -53,16 +65,22 @@ export const getDashboardStats = async (req: Request, res: Response) => {
                 ),
             );
 
-        // Purchase stats
+        // Purchase stats (Net: Purchase - Returns)
         const [purchasesThisMonth] = await db
             .select({
                 count: sql<number>`count(*)`,
-                total: sql<number>`COALESCE(sum(${transactions.totalAmount}), 0)`,
+                total: sql<number>`SUM(
+                    CASE 
+                        WHEN ${transactions.type} = 'purchase' THEN ${transactions.totalAmount}
+                        WHEN ${transactions.type} = 'purchase_return' THEN -${transactions.totalAmount}
+                        ELSE 0 
+                    END
+                )`,
             })
             .from(transactions)
             .where(
                 and(
-                    eq(transactions.type, "purchase"),
+                    sql`${transactions.type} IN ('purchase', 'purchase_return')`,
                     eq(transactions.status, "posted"),
                     gte(
                         transactions.date,
@@ -98,13 +116,15 @@ export const getDashboardStats = async (req: Request, res: Response) => {
                 ),
             );
 
-        // Low stock items
+        // Low stock items (Join with products to get names)
         const lowStockItems = await db
             .select({
                 productId: stocks.productId,
+                productName: products.name,
                 qty: stocks.qty,
             })
             .from(stocks)
+            .innerJoin(products, eq(stocks.productId, products.id))
             .where(sql`${stocks.qty} < 10`)
             .limit(5);
 

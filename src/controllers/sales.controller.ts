@@ -463,6 +463,7 @@ export const getPaginatedSales = async (req: Request, res: Response) => {
                     status: transactions.status,
                     totalAmount: transactions.totalAmount,
                     date: transactions.date,
+                    parentId: transactions.parentId,
                 })
                 .from(transactions)
                 .innerJoin(contacts, eq(contacts.id, transactions.contactId))
@@ -570,62 +571,56 @@ export const cancelSales = async (req: Request, res: Response) => {
                 .where(eq(transactionDetails.transactionId, id));
 
             // 4. Create Reversal Transaction
-            const reversalInvoice = await generateInvoice("sales");
+            const reversalInvoice = await generateInvoice(original.type as any);
             const [reversal] = await tx
                 .insert(transactions)
                 .values({
                     userId: req.user!.id,
-                    type: "sales",
+                    type: original.type,
                     invoice: reversalInvoice,
                     reference: `Void of ${original.invoice}`,
                     contactId: original.contactId,
                     termOfPayment: original.termOfPayment,
                     date: new Date().toISOString(),
-                    status: "posted",
+                    status: "cancelled",
+                    parentId: original.id,
                     updatedAt: new Date(),
-                    totalAmount: original.totalAmount,
+                    subtotal: -Number(original.subtotal),
+                    totalDiscount: -Number(original.totalDiscount),
+                    totalTax: -Number(original.totalTax || 0),
+                    totalAmount: -Number(original.totalAmount),
                 })
                 .returning();
 
-            // 5. Create Reversed Details (Invert Movement Type)
-            // Sales was -1 (OUT). Reversal is 1 (IN).
+            // 5. Create Reversed Details (Negative Qty/Amount, Invert Movement)
             const reversedDetails = originalDetails.map((detail) => ({
-                ...detail,
                 transactionId: reversal.id,
-                movementType: 1, // IN
-                // Note: For IN, unitCost is used. We should use the cost it was sold at?
-                // Or leave it?
-                // originalDetails has totalCost.
-                // updateStockForTransaction treats IN as adding stock.
-                // It uses detail.unitCost * detail.qty.
-                // original detail likely has totalCost (COGS).
-                // unitCost might be derived.
-                // Let's ensure unitCost is correct if available.
+                productId: detail.productId,
+                productDetailId: detail.productDetailId,
+                baseRatio: detail.baseRatio,
+                qty: -Number(detail.qty),
+                price: detail.price,
+                discount: -Number(detail.discount),
+                amount: -Number(detail.amount),
+                taxRate: detail.taxRate,
+                unitCost: detail.unitCost,
+                totalCost: -Number(detail.totalCost || 0),
+                movementType: original.type === "sales" || original.type === "pos_sales" ? 1 : -1, // IN for sales void, OUT for purchase void
             }));
 
             // Insert Reversed Details
             for (const detail of reversedDetails) {
-                await tx.insert(transactionDetails).values({
-                    transactionId: reversal.id,
-                    productId: detail.productId,
-                    productDetailId: detail.productDetailId,
-                    baseRatio: detail.baseRatio,
-                    qty: detail.qty,
-                    price: detail.price,
-                    discount: detail.discount,
-                    amount: detail.amount,
-                    taxRate: detail.taxRate,
-                    unitCost: detail.unitCost, // Important for IN cost
-                    totalCost: detail.totalCost,
-                    movementType: detail.movementType,
-                });
+                await tx.insert(transactionDetails).values(detail);
             }
 
-            // 6. Update Stock (Process logic for Reversal - IN)
+            // 6. Update Stock (Use absolute Qty for stock logic)
             await updateStockForTransaction(
                 reversal.id,
-                "sales",
-                reversedDetails as any,
+                original.type as any,
+                reversedDetails.map(d => ({
+                    ...d,
+                    qty: Math.abs(d.qty)
+                })) as any,
                 tx,
             );
 

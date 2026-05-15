@@ -5,6 +5,7 @@ import {
     getSalesReturnById,
     postSalesReturn,
     updateSalesReturn,
+    cancelSalesReturn,
 } from "@/controllers/sales-return.controller";
 import { Router } from "express";
 
@@ -16,5 +17,6 @@ salesReturnRouter.get("/:id", getSalesReturnById);
 salesReturnRouter.post("/", createSalesReturn);
 salesReturnRouter.put("/:id", updateSalesReturn);
 salesReturnRouter.post("/:id/post", postSalesReturn);
+salesReturnRouter.post("/:id/cancel", cancelSalesReturn);
 
 export default salesReturnRouter;

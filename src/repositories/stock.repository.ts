@@ -59,13 +59,9 @@ export async function updateStockForTransaction(
                 const effectiveCost =
                     transactionType === "sales_return"
                         ? (detail.unitCost ?? 0)
-                        : transactionType === "transfer_stock"
+                        : ["purchase", "sales", "pos_sales", "transfer_stock", "adjustment"].includes(transactionType)
                             ? (detail.unitCost ?? 0)
-                            : transactionType === "adjustment"
-                                ? (detail.unitCost ?? 0)
-                                : transactionType === "purchase"
-                                    ? (detail.unitCost ?? 0)
-                                    : 0;
+                            : 0;
 
                 const [movement] = await tx
                     .insert(stockMovements)

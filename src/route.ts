@@ -28,11 +28,18 @@ import priceGroupRouter from "./routes/price-group.route";
 import posSessionRouter from "./routes/pos-session.route";
 import posRouter from "./routes/pos.route";
 import paymentMethodRouter from "./routes/payment-method.route";
+import bridgeRouter from "./routes/bridge.route";
 import settingRouter from "./routes/setting.route";
+import salesReturnRouter from "./routes/sales-return.route";
+import purchaseReturnRouter from "./routes/purchase-return.route";
+
+import { refresh } from "./controllers/auth.controller";
 
 export const route = Router();
 
 route.use("/auth", authRouter);
+route.get("/refresh", refresh);
+route.use("/bridge", bridgeRouter);
 route.use(isAuthenticated);
 route.get("/me", (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
@@ -68,4 +75,6 @@ route.use("/price-groups", priceGroupRouter);
 route.use("/pos-sessions", posSessionRouter);
 route.use("/pos", posRouter);
 route.use("/payment-methods", paymentMethodRouter);
+route.use("/sales-return", salesReturnRouter);
+route.use("/purchase-return", purchaseReturnRouter);
 route.use("/settings", settingRouter);

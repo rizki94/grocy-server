@@ -2,20 +2,18 @@ import z from "zod";
 
 const paymentLineInsertSchema = z.object({
     openInvoiceId: z.string().uuid(),
-    amount: z.number().positive(),
+    amount: z.number(),
 });
 
 const paymentAccountInsertSchema = z.object({
     glAccountId: z.string().uuid(),
-    amount: z.number().positive(),
+    amount: z.number(),
 });
 
 export const paymentInsertSchema = z.object({
     contactId: z.string().uuid({ message: "Supplier is required" }),
     date: z.string(),
-    totalAmount: z
-        .number({ invalid_type_error: "Total is required" })
-        .min(0, "Total tidak boleh negatif"),
+    totalAmount: z.number({ invalid_type_error: "Total is required" }),
     status: z.enum(["draft", "posted"]).optional(),
     type: z.enum(["receivable", "payable"]),
     reference: z.string().optional(),

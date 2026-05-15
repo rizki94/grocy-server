@@ -23,11 +23,11 @@ export const transactionTypes = [
 export type TransactionType = (typeof transactionTypes)[number];
 
 export const transactionPrefixes = {
-    purchase: "P",
-    sales: "S",
-    sales_return: "SR",
-    purchase_return: "PR",
-    transfer_stock: "TS",
+    purchase: "PUR",
+    sales: "SLS",
+    sales_return: "SLR",
+    purchase_return: "PCR",
+    transfer_stock: "TRF",
     adjustment: "ADJ",
     pos_sales: "POS",
 };

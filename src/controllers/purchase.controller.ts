@@ -436,6 +436,7 @@ export const getPaginatedPurchases = async (req: Request, res: Response) => {
                     status: transactions.status,
                     totalAmount: transactions.totalAmount,
                     date: transactions.date,
+                    parentId: transactions.parentId,
                 })
                 .from(transactions)
                 .innerJoin(contacts, eq(contacts.id, transactions.contactId))
@@ -587,49 +588,51 @@ export const cancelPurchase = async (req: Request, res: Response) => {
                 .insert(transactions)
                 .values({
                     userId: req.user!.id,
-                    type: "purchase", // Keep type purchase, but movements will be OUT
+                    type: "purchase",
                     invoice: reversalInvoice,
                     reference: `Void of ${original.invoice}`,
                     contactId: original.contactId,
                     termOfPayment: original.termOfPayment,
                     date: new Date().toISOString(),
-                    status: "posted",
+                    status: "cancelled",
+                    parentId: original.id,
                     updatedAt: new Date(),
-                    totalAmount: original.totalAmount, // Negative? No, keep absolute, journal handles direction
+                    subtotal: -Number(original.subtotal),
+                    totalDiscount: -Number(original.totalDiscount),
+                    totalTax: -Number(original.totalTax || 0),
+                    totalAmount: -Number(original.totalAmount),
                 })
                 .returning();
 
-            // 5. Create Reversed Details (Invert Movement Type)
-            // Purchase was 1 (IN). Reversal is -1 (OUT).
+            // 5. Create Reversed Details (Negative Qty/Amount, Invert Movement)
             const reversedDetails = originalDetails.map((detail) => ({
-                ...detail,
                 transactionId: reversal.id,
-                movementType: -1,
+                productId: detail.productId,
+                productDetailId: detail.productDetailId,
+                baseRatio: detail.baseRatio,
+                qty: -Number(detail.qty),
+                price: detail.price,
+                discount: -Number(detail.discount),
+                amount: -Number(detail.amount),
+                taxRate: detail.taxRate,
+                unitCost: detail.unitCost,
+                totalCost: -Number(detail.totalCost || 0),
+                movementType: -1, // OUT for purchase void (Inverted from IN)
             }));
 
             // Insert Reversed Details
             for (const detail of reversedDetails) {
-                await tx.insert(transactionDetails).values({
-                    transactionId: reversal.id,
-                    productId: detail.productId,
-                    productDetailId: detail.productDetailId,
-                    baseRatio: detail.baseRatio,
-                    qty: detail.qty,
-                    price: detail.price,
-                    discount: detail.discount,
-                    amount: detail.amount,
-                    taxRate: detail.taxRate,
-                    unitCost: detail.unitCost,
-                    totalCost: detail.totalCost,
-                    movementType: detail.movementType,
-                });
+                await tx.insert(transactionDetails).values(detail);
             }
 
-            // 6. Update Stock (Process logic for Reversal - OUT)
+            // 6. Update Stock (Use absolute Qty for stock logic)
             await updateStockForTransaction(
                 reversal.id,
                 "purchase",
-                reversedDetails as any, // Cast because 'purchase' usually expects IN, but we force OUT movements
+                reversedDetails.map(d => ({
+                    ...d,
+                    qty: Math.abs(d.qty)
+                })) as any,
                 tx,
             );
 

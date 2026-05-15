@@ -14,6 +14,7 @@ import {
     journals,
     journalEntries,
     accountMappings,
+    productDetails,
     settings,
 } from "@/db/schemas";
 import { generateInvoice } from "@/helpers/generate-invoice";
@@ -114,22 +115,44 @@ export async function checkout(req: Request, res: Response) {
             // 5. Create Transaction Details
             const finalDetails = [];
             for (const d of details) {
+                let pdId = d.productDetailId || d.id;
+
+                // Fallback: If no detail ID provided, find level 1 for this product
+                if (!pdId || pdId === "") {
+                    const fallbackDetail = await tx
+                        .select()
+                        .from(productDetails)
+                        .where(
+                            and(
+                                eq(productDetails.productId, d.productId),
+                                eq(productDetails.level, 1),
+                            ),
+                        )
+                        .limit(1)
+                        .then((r) => r[0]);
+                    pdId = fallbackDetail?.id;
+                }
+
+                if (!pdId) {
+                    throw new Error(`Product detail not found for product ${d.productId}`);
+                }
+
                 const [detail] = await tx
                     .insert(transactionDetails)
                     .values({
                         transactionId: transaction.id,
                         productId: d.productId,
-                        productDetailId: d.productDetailId || d.id,
+                        productDetailId: pdId,
                         warehouseId:
                             d.warehouseId || user?.posWarehouseId || null,
                         qty: d.qty,
                         price: d.price,
                         discount: d.discount,
                         amount: d.amount,
-                        baseRatio: d.baseRatio,
-                        unitCost: d.unitCost,
-                        totalCost: d.totalCost,
-                        taxRate: d.taxRate,
+                        baseRatio: d.baseRatio || 1,
+                        unitCost: d.unitCost || 0,
+                        totalCost: d.totalCost || 0,
+                        taxRate: d.taxRate || 0,
                         movementType: -1, // OUT
                     })
                     .returning();
