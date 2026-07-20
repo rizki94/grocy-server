@@ -89,6 +89,9 @@ export const createAdjustment = async (req: Request, res: Response) => {
                 totalCost: detail.totalCost,
                 taxRate: detail.taxRate,
                 movementType: detail.movementType,
+                batchNumber: detail.batchNumber,
+                expiryDate: detail.expiryDate,
+                serialNumbers: detail.serialNumbers,
             });
         }
 
@@ -170,6 +173,9 @@ export const updateAdjustment = async (req: Request, res: Response) => {
                 totalCost: detail.totalCost,
                 taxRate: detail.taxRate,
                 movementType: detail.movementType,
+                batchNumber: detail.batchNumber,
+                expiryDate: detail.expiryDate,
+                serialNumbers: detail.serialNumbers,
             });
         }
 
@@ -483,6 +489,9 @@ export const cancelAdjustment = async (req: Request, res: Response) => {
                     unitCost: detail.unitCost,
                     totalCost: detail.totalCost,
                     movementType: detail.movementType,
+                    batchNumber: detail.batchNumber,
+                    expiryDate: detail.expiryDate,
+                    serialNumbers: detail.serialNumbers,
                 });
             }
 

@@ -116,16 +116,18 @@ export const getDashboardStats = async (req: Request, res: Response) => {
                 ),
             );
 
-        // Low stock items (Join with products to get names)
+        // Low stock items (Using product reorderLevel)
         const lowStockItems = await db
             .select({
-                productId: stocks.productId,
-                productName: products.name,
-                qty: stocks.qty,
+                productId: products.id,
+                name: products.name,
+                qty: sql<number>`SUM(${stocks.qty})`,
+                reorderLevel: products.reorderLevel,
             })
             .from(stocks)
             .innerJoin(products, eq(stocks.productId, products.id))
-            .where(sql`${stocks.qty} < 10`)
+            .groupBy(products.id, products.name, products.reorderLevel)
+            .having(sql`SUM(${stocks.qty}) < ${products.reorderLevel}`)
             .limit(5);
 
         // Recent transactions
@@ -177,7 +179,9 @@ export const getDashboardStats = async (req: Request, res: Response) => {
             },
             lowStockItems: lowStockItems.map((item) => ({
                 productId: item.productId,
+                name: item.name,
                 qty: Number(item.qty),
+                reorderLevel: Number(item.reorderLevel),
             })),
             recentTransactions: recentTransactions.map((t) => ({
                 ...t,

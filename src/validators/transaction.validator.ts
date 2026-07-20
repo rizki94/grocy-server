@@ -31,6 +31,9 @@ const transactionDetailBaseSchema = z.object({
     amount: z.number(),
     taxRate: z.number(),
     movementType: z.number(),
+    batchNumber: z.string().nullable().optional(),
+    expiryDate: z.string().nullable().optional(),
+    serialNumbers: z.array(z.string()).optional(),
 });
 
 export const transactionDetailInsertSchema = transactionDetailBaseSchema.refine(
@@ -90,6 +93,9 @@ export const transferStockDetailInsertSchema = z.object({
     productDetailId: z.string().min(1, "Product detail is required"),
     baseRatio: z.number(),
     qty: z.number(),
+    batchNumber: z.string().nullable().optional(),
+    expiryDate: z.string().nullable().optional(),
+    serialNumbers: z.array(z.string()).optional(),
 });
 
 export const transferStockUpdateSchema = transferStockInsertSchema.extend({

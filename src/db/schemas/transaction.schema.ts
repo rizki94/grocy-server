@@ -75,6 +75,9 @@ export const transactionDetails = pgTable("transaction_details", {
     unitCost: decimalAsNumber(12, 2)("unit_cost").notNull().default(0),
     totalCost: decimalAsNumber(12, 2)("total_cost").notNull().default(0),
     taxRate: decimalAsNumber(5, 2)("tax_rate").notNull().default(0),
+    batchNumber: text("batch_number"),
+    expiryDate: date("expiry_date"),
+    serialNumbers: text("serial_numbers").array(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
         .defaultNow()

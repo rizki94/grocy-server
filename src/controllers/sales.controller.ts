@@ -605,6 +605,9 @@ export const cancelSales = async (req: Request, res: Response) => {
                 taxRate: detail.taxRate,
                 unitCost: detail.unitCost,
                 totalCost: -Number(detail.totalCost || 0),
+                batchNumber: detail.batchNumber,
+                expiryDate: detail.expiryDate,
+                serialNumbers: detail.serialNumbers,
                 movementType: original.type === "sales" || original.type === "pos_sales" ? 1 : -1, // IN for sales void, OUT for purchase void
             }));
 

@@ -5,10 +5,12 @@ import {
     stockLayers,
     stockMovements,
     stocks,
+    transactions,
     transactionDetails,
     settings,
+    stockSerialNumbers,
 } from "@/db/schemas";
-import { sql, eq, and, gt, asc } from "drizzle-orm";
+import { sql, eq, and, gt, asc, inArray, isNull } from "drizzle-orm";
 
 export async function updateStockForTransaction(
     transactionId: string,
@@ -20,6 +22,10 @@ export async function updateStockForTransaction(
         baseRatio: number;
         movementType: number;
         unitCost?: number;
+        batchNumber?: string | null;
+        expiryDate?: string | null;
+        serialNumbers?: string[] | null;
+        serialNumber?: string | null; // For single unit movements
     }[],
     tx?: any, // Optional transaction context
 ) {
@@ -30,15 +36,26 @@ export async function updateStockForTransaction(
         for (const detail of details) {
             const baseQty = detail.qty * detail.baseRatio;
 
-            let [stock] =
-                (await tx
-                    .select()
-                    .from(stocks)
-                    .where(
-                        detail.warehouseId
-                            ? and(eq(stocks.productId, detail.productId), eq(stocks.warehouseId, detail.warehouseId))
-                            : eq(stocks.productId, detail.productId)
-                    )) || [];
+            const stockWhere = [
+                eq(stocks.productId, detail.productId),
+            ];
+            
+            if (detail.warehouseId) {
+                stockWhere.push(eq(stocks.warehouseId, detail.warehouseId));
+            } else {
+                stockWhere.push(isNull(stocks.warehouseId));
+            }
+
+            if (detail.batchNumber) {
+                stockWhere.push(eq(stocks.batchNumber, detail.batchNumber));
+            } else {
+                stockWhere.push(isNull(stocks.batchNumber));
+            }
+
+            let [stock] = await tx
+                .select()
+                .from(stocks)
+                .where(and(...stockWhere)) || [];
 
             if (!stock) {
                 const [inserted] = await tx
@@ -46,6 +63,8 @@ export async function updateStockForTransaction(
                     .values({
                         productId: detail.productId,
                         warehouseId: detail.warehouseId,
+                        batchNumber: detail.batchNumber,
+                        expiryDate: detail.expiryDate,
                         qty: 0,
                     })
                     .returning();
@@ -71,8 +90,38 @@ export async function updateStockForTransaction(
                         qty: baseQty,
                         type: "IN",
                         unitCost: effectiveCost,
+                        batchNumber: detail.batchNumber,
+                        expiryDate: detail.expiryDate,
+                        serialNumber: detail.serialNumber,
                     })
                     .returning();
+
+                // Handle Serial Numbers IN
+                if (detail.serialNumbers && detail.serialNumbers.length > 0) {
+                    for (const sn of detail.serialNumbers) {
+                        await tx.insert(stockSerialNumbers).values({
+                            productId: detail.productId,
+                            warehouseId: detail.warehouseId!,
+                            serialNumber: sn,
+                            status: "available",
+                            transactionId,
+                        }).onConflictDoUpdate({
+                            target: stockSerialNumbers.serialNumber,
+                            set: { status: "available", warehouseId: detail.warehouseId!, transactionId }
+                        });
+                    }
+                } else if (detail.serialNumber) {
+                    await tx.insert(stockSerialNumbers).values({
+                        productId: detail.productId,
+                        warehouseId: detail.warehouseId!,
+                        serialNumber: detail.serialNumber,
+                        status: "available",
+                        transactionId,
+                    }).onConflictDoUpdate({
+                        target: stockSerialNumbers.serialNumber,
+                        set: { status: "available", warehouseId: detail.warehouseId!, transactionId }
+                    });
+                }
 
                 await tx.insert(stockLayers).values({
                     stockId: stock.id,
@@ -137,13 +186,41 @@ export async function updateStockForTransaction(
 
                 const avgCost = totalUsedQty > 0 ? totalCost / totalUsedQty : 0;
 
-                await tx.insert(stockMovements).values({
+                const [movement] = await tx.insert(stockMovements).values({
                     stockId: stock.id,
                     transactionId,
                     qty: -baseQty,
                     type: "OUT",
                     unitCost: avgCost,
-                });
+                    batchNumber: detail.batchNumber,
+                    expiryDate: detail.expiryDate,
+                    serialNumber: detail.serialNumber,
+                }).returning();
+
+                // Handle Serial Numbers OUT
+                // Determine if this OUT movement is a void/cancellation reversal
+                const [txRow] = await tx
+                    .select({ status: transactions.status })
+                    .from(transactions)
+                    .where(eq(transactions.id, transactionId))
+                    .limit(1);
+                const serialOutStatus = txRow?.status === "cancelled" ? "voided" : "sold";
+
+                if (detail.serialNumbers && detail.serialNumbers.length > 0) {
+                    await tx.update(stockSerialNumbers)
+                        .set({ status: serialOutStatus, transactionId })
+                        .where(and(
+                            eq(stockSerialNumbers.productId, detail.productId),
+                            inArray(stockSerialNumbers.serialNumber, detail.serialNumbers)
+                        ));
+                } else if (detail.serialNumber) {
+                    await tx.update(stockSerialNumbers)
+                        .set({ status: serialOutStatus, transactionId })
+                        .where(and(
+                            eq(stockSerialNumbers.productId, detail.productId),
+                            eq(stockSerialNumbers.serialNumber, detail.serialNumber)
+                        ));
+                }
 
                 await tx
                     .update(stocks)

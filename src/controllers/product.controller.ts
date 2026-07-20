@@ -62,6 +62,9 @@ export async function getActiveProducts(req: Request, res: Response) {
                 baseRatio: sql<number>`COALESCE(${productDetails.baseRatio}, 1)`,
                 cost: sql<number>`COALESCE(${productDetails.cost}, 0)`,
                 taxRate: sql<number>`COALESCE(${taxes.rate}, 0)`,
+                useBatch: products.useBatch,
+                useExpiry: products.useExpiry,
+                useSerialNumber: products.useSerialNumber,
             })
             .from(products)
             .innerJoin(productDetails, eq(productDetails.productId, products.id))
@@ -246,6 +249,10 @@ export const createProduct = async (req: Request, res: Response) => {
                 description: product.description,
                 isActive: product.isActive,
                 taxId: product.taxId,
+                useBatch: product.useBatch,
+                useExpiry: product.useExpiry,
+                useSerialNumber: product.useSerialNumber,
+                reorderLevel: product.reorderLevel,
             })
             .returning();
 
@@ -342,6 +349,10 @@ export const updateProduct = async (req: Request, res: Response) => {
                 description: product.description,
                 isActive: product.isActive,
                 taxId: product.taxId,
+                useBatch: product.useBatch,
+                useExpiry: product.useExpiry,
+                useSerialNumber: product.useSerialNumber,
+                reorderLevel: product.reorderLevel,
             })
             .where(eq(products.id, product.id))
             .returning();

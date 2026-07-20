@@ -24,6 +24,10 @@ export const products = pgTable("products", {
         .defaultNow()
         .notNull()
         .$onUpdate(() => new Date()),
+    useBatch: boolean("use_batch").notNull().default(false),
+    useExpiry: boolean("use_expiry").notNull().default(false),
+    useSerialNumber: boolean("use_serial_number").notNull().default(false),
+    reorderLevel: decimalAsNumber(12, 2)("reorder_level").notNull().default(0),
 });
 
 export const productDetails = pgTable("product_details", {

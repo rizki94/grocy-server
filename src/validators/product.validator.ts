@@ -65,7 +65,11 @@ export const productInsertSchema = z.object({
     name: z.string().min(3, "name min 3 chars"),
     description: z.string().optional(),
     isActive: z.boolean(),
-    taxId: z.string(),
+    taxId: z.string().uuid().nullable().optional(),
+    useBatch: z.boolean().optional().default(false),
+    useExpiry: z.boolean().optional().default(false),
+    useSerialNumber: z.boolean().optional().default(false),
+    reorderLevel: z.number().min(0).optional().default(0),
 });
 
 export const productWithDetailInsertSchema = productInsertSchema.extend({

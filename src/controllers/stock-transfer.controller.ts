@@ -98,6 +98,9 @@ export const createTransfer = async (req: Request, res: Response) => {
                 totalCost: 0,
                 taxRate: 0,
                 movementType: -1,
+                batchNumber: detail.batchNumber,
+                expiryDate: detail.expiryDate,
+                serialNumbers: detail.serialNumbers,
             });
             // IN Detail
             await db.insert(transactionDetails).values({
@@ -114,6 +117,9 @@ export const createTransfer = async (req: Request, res: Response) => {
                 totalCost: 0,
                 taxRate: 0,
                 movementType: 1,
+                batchNumber: detail.batchNumber,
+                expiryDate: detail.expiryDate,
+                serialNumbers: detail.serialNumbers,
             });
         }
 
@@ -190,6 +196,9 @@ export const updateTransfer = async (req: Request, res: Response) => {
                 totalCost: 0,
                 taxRate: 0,
                 movementType: -1,
+                batchNumber: detail.batchNumber,
+                expiryDate: detail.expiryDate,
+                serialNumbers: detail.serialNumbers,
             });
             await db.insert(transactionDetails).values({
                 transactionId: updated.id,
@@ -205,6 +214,9 @@ export const updateTransfer = async (req: Request, res: Response) => {
                 totalCost: 0,
                 taxRate: 0,
                 movementType: 1,
+                batchNumber: detail.batchNumber,
+                expiryDate: detail.expiryDate,
+                serialNumbers: detail.serialNumbers,
             });
         }
 

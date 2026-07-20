@@ -617,6 +617,9 @@ export const cancelPurchase = async (req: Request, res: Response) => {
                 taxRate: detail.taxRate,
                 unitCost: detail.unitCost,
                 totalCost: -Number(detail.totalCost || 0),
+                batchNumber: detail.batchNumber,
+                expiryDate: detail.expiryDate,
+                serialNumbers: detail.serialNumbers,
                 movementType: -1, // OUT for purchase void (Inverted from IN)
             }));
 
