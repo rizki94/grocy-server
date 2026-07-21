@@ -30,6 +30,8 @@ export const getUserById = async (req: Request, res: Response) => {
             .select({
                 id: users.id,
                 username: users.username,
+                displayName: users.displayName,
+                avatar: users.avatar,
                 roleId: users.roleId,
                 isActive: users.isActive,
             })
@@ -179,11 +181,16 @@ export const getPaginatedUsers = async (req: Request, res: Response) => {
                       sql`LOWER(${users.username})`,
                       `%${search.toLowerCase()}%`,
                   ),
+                  like(
+                      sql`LOWER(${users.displayName})`,
+                      `%${search.toLowerCase()}%`,
+                  ),
               )
             : undefined;
 
         const sortColumns: Record<string, PgColumn> = {
             username: users.username,
+            displayName: users.displayName,
             roleId: users.roleId,
             isActive: users.isActive,
         };
@@ -198,6 +205,8 @@ export const getPaginatedUsers = async (req: Request, res: Response) => {
                 .select({
                     id: users.id,
                     username: users.username,
+                    displayName: users.displayName,
+                    avatar: users.avatar,
                     role: roles.name,
                     isActive: users.isActive,
                     cashGlAccountId: users.cashGlAccountId,
@@ -266,5 +275,55 @@ export const updateUserPosSetup = async (req: Request, res: Response) => {
     } catch (error) {
         console.error("Error updating POS setup:", error);
         return res.status(500).json({ message: "Failed to update POS setup" });
+    }
+};
+
+export const changePassword = async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+        return res.status(400).json({ message: "Current and new password are required" });
+    }
+    if (newPassword.length < 6) {
+        return res.status(400).json({ message: "New password must be at least 6 characters" });
+    }
+
+    // Only allow users to change their own password (or admin)
+    if (req.user?.id !== id) {
+        return res.status(403).json({ message: "Forbidden" });
+    }
+
+    try {
+        const [user] = await db
+            .select()
+            .from(users)
+            .where(eq(users.id, id))
+            .limit(1);
+
+        if (!user) return res.status(404).json({ message: "User not found" });
+
+        const isMatch = await bcrypt.compare(currentPassword, user.password);
+        if (!isMatch) {
+            return res.status(401).json({ message: "Current password is incorrect" });
+        }
+
+        await db
+            .update(users)
+            .set({ password: await bcrypt.hash(newPassword, 10) })
+            .where(eq(users.id, id));
+
+        logAction(req, {
+            action: "update",
+            table: "users",
+            data: { id },
+            userId: req.user!.id,
+            msg: `changed password for user #${id}`,
+        });
+
+        return res.status(200).json({ message: "Password changed successfully" });
+    } catch (error) {
+        console.error("Error changing password:", error);
+        return res.status(500).json({ message: "Failed to change password" });
     }
 };

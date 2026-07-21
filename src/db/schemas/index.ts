@@ -18,3 +18,5 @@ export * from "./price-group.schema";
 export * from "./pos-session.schema";
 export * from "./payment-method.schema";
 export * from "./setting.schema";
+export * from "./message.schema";
+export * from "./notification.schema";

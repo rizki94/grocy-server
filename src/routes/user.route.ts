@@ -5,6 +5,7 @@ import {
     getUserById,
     updateUser,
     updateUserPosSetup,
+    changePassword,
 } from "@/controllers/user.controller";
 import e, { Router } from "express";
 
@@ -16,5 +17,6 @@ userRouter.get("/:id", getUserById);
 userRouter.post("/", createUser);
 userRouter.put("/:id", updateUser);
 userRouter.put("/:id/pos-setup", updateUserPosSetup);
+userRouter.put("/:id/change-password", changePassword);
 
 export default userRouter;

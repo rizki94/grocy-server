@@ -20,14 +20,28 @@ const fileFilter = (
     file: Express.Multer.File,
     cb: FileFilterCallback
 ) => {
-    if (file.mimetype.startsWith("image/")) cb(null, true);
-    else cb(new Error("Only image files are allowed!"));
+    const allowedMimeTypes = [
+        "image/",
+        "video/",
+        "audio/",
+        "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "text/plain",
+        "application/zip",
+        "application/x-zip-compressed",
+    ];
+    const isAllowed = allowedMimeTypes.some(mime => file.mimetype.startsWith(mime));
+    if (isAllowed) cb(null, true);
+    else cb(new Error("File type not allowed!"));
 };
 
 const upload = multer({
     storage,
     fileFilter,
-    limits: { fileSize: 5 * 1024 * 1024 },
+    limits: { fileSize: 50 * 1024 * 1024 }, // 50MB for video/audio
 });
 
 uploadRouter.post(

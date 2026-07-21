@@ -7,6 +7,8 @@ export const userInsertSchema = z.object({
         .string()
         .min(4, "Username minimum 4 characters")
         .max(12, "Username maximum 12 characters"),
+    displayName: z.string().max(50, "Display name maximum 50 characters").optional().nullable(),
+    avatar: z.string().optional().nullable(),
     password: z.string().min(6).max(50),
     roleId: z.string().min(1, "Role is required"),
     isActive: z.boolean().default(true),

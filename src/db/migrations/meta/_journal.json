@@ -43,6 +43,13 @@
       "when": 1770787605543,
       "tag": "0005_steady_franklin_storm",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1784528395096,
+      "tag": "0006_stale_goblin_queen",
+      "breakpoints": true
     }
   ]
 }

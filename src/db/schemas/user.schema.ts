@@ -7,6 +7,8 @@ import { warehouses } from "./warehouse.schema";
 export const users = pgTable("users", {
     id: uuid("id").defaultRandom().primaryKey(),
     username: text("username").notNull().unique(),
+    displayName: text("display_name"),
+    avatar: text("avatar"),
     password: text("password").notNull(),
     isActive: boolean("is_active").notNull().default(true),
     roleId: uuid("role_id")

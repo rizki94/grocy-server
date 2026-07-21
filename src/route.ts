@@ -32,6 +32,8 @@ import bridgeRouter from "./routes/bridge.route";
 import settingRouter from "./routes/setting.route";
 import salesReturnRouter from "./routes/sales-return.route";
 import purchaseReturnRouter from "./routes/purchase-return.route";
+import messageRouter from "./routes/message.route";
+import notificationRouter from "./routes/notification.route";
 
 import { refresh } from "./controllers/auth.controller";
 
@@ -44,8 +46,9 @@ route.use(isAuthenticated);
 route.get("/me", (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
 
+    const { password, ...safeUser } = req.user as any;
     res.json({
-        user: req.user,
+        user: safeUser,
     });
 });
 route.use("/dashboard", dashboardRouter);
@@ -78,3 +81,5 @@ route.use("/payment-methods", paymentMethodRouter);
 route.use("/sales-return", salesReturnRouter);
 route.use("/purchase-return", purchaseReturnRouter);
 route.use("/settings", settingRouter);
+route.use("/chat", messageRouter);
+route.use("/notifications", notificationRouter);

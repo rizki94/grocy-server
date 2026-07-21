@@ -10,6 +10,9 @@ import { notFound } from "./middleware/not-found";
 import { logger } from "./logger";
 import pinoHttp from "pino-http";
 
+import { createServer } from "http";
+import { initSocketServer } from "./services/socket.service";
+
 const app = express();
 app.set("etag", false);
 
@@ -56,6 +59,9 @@ app.use("/uploads", express.static("uploads"));
 app.use(notFound);
 app.use(errorHandler);
 
-app.listen(process.env.SERVER_PORT || 3001, () => {
+const httpServer = createServer(app);
+initSocketServer(httpServer);
+
+httpServer.listen(process.env.SERVER_PORT || 3001, () => {
     console.log(`🚀 Server running on port ${process.env.SERVER_PORT || 3001}`);
 });
