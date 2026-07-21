@@ -2,6 +2,7 @@ import { Server as SocketIOServer, Socket } from "socket.io";
 import { Server as HTTPServer } from "http";
 import { sessionMiddleware } from "./session";
 import passport from "passport";
+import jwt from "jsonwebtoken";
 
 let io: SocketIOServer | null = null;
 
@@ -22,23 +23,51 @@ export function initSocketServer(server: HTTPServer) {
         sessionMiddleware(req, {} as any, next as any);
     });
 
-    // Share passport middleware
+    // Share passport middleware & token auth
     io.use((socket, next) => {
         const req = socket.request as any;
         passport.initialize()(req, {} as any, () => {
             passport.session()(req, {} as any, () => {
                 if (req.user) {
-                    next();
-                } else {
-                    next(new Error("Unauthorized"));
+                    return next();
                 }
+
+                // Check socket handshake auth / headers / query / req.headers for JWT token (mobile)
+                const authHeader =
+                    socket.handshake.headers?.authorization ||
+                    req.headers?.authorization;
+
+                const token =
+                    socket.handshake.auth?.token ||
+                    (authHeader && authHeader.startsWith("Bearer ")
+                        ? authHeader.split(" ")[1]
+                        : null) ||
+                    (socket.handshake.query?.token as string);
+
+                if (token) {
+                    try {
+                        const decoded = jwt.verify(
+                            token,
+                            process.env.JWT_SECRET || "secret"
+                        ) as any;
+                        req.user = decoded;
+                        console.log(`🔑 Socket authenticated via JWT: user ${decoded.id}`);
+                        return next();
+                    } catch (err: any) {
+                        console.error(`🔒 Socket JWT verify error: ${err.message}`);
+                        return next(new Error(`Unauthorized: ${err.message}`));
+                    }
+                }
+
+                console.error("🔒 Socket auth failed: No session and no JWT token provided");
+                next(new Error("Unauthorized: No token provided"));
             });
         });
     });
 
     io.on("connection", (socket: Socket) => {
         const req = socket.request as any;
-        const userId = req.user.id;
+        const userId = String(req.user.id || req.user._id || req.user);
 
         if (!userSockets.has(userId)) {
             userSockets.set(userId, new Set());
@@ -81,9 +110,11 @@ export function getSocketIO() {
 }
 
 // Push to specific users
-export function sendRealtimeNotification(userId: string, notification: any) {
+export function sendRealtimeNotification(userId: string | number, notification: any) {
     if (io) {
-        io.to(`user:${userId}`).emit("notification:new", notification);
+        const room = `user:${String(userId)}`;
+        console.log(`📡 Emitting notification:new to room ${room}:`, notification.title);
+        io.to(room).emit("notification:new", notification);
     }
 }
 
