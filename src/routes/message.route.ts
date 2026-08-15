@@ -9,12 +9,17 @@ import {
     deleteMessage,
     addParticipants,
     removeParticipant,
+    getTotalUnreadCount,
+    updateGroupDetails,
 } from "@/controllers/message.controller";
 
 const messageRouter = Router();
 
+messageRouter.get("/unread-count", getTotalUnreadCount);
 messageRouter.get("/conversations", getConversations);
 messageRouter.post("/conversations", createConversation);
+messageRouter.put("/conversations/:conversationId", updateGroupDetails);
+messageRouter.patch("/conversations/:conversationId", updateGroupDetails);
 messageRouter.get("/conversations/:conversationId/messages", getMessages);
 messageRouter.post("/conversations/:conversationId/messages", sendMessage);
 messageRouter.post("/conversations/:conversationId/read", markAsRead);

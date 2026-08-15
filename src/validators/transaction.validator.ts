@@ -31,9 +31,38 @@ const transactionDetailBaseSchema = z.object({
     amount: z.number(),
     taxRate: z.number(),
     movementType: z.number(),
-    batchNumber: z.string().nullable().optional(),
-    expiryDate: z.string().nullable().optional(),
-    serialNumbers: z.array(z.string()).optional(),
+    // Coerce empty strings → null so Postgres date/text columns don't reject ""
+    batchNumber: z
+        .string()
+        .nullable()
+        .optional()
+        .transform((v) => (v === "" ? null : v)),
+    returnReasonId: z
+        .string()
+        .nullable()
+        .optional()
+        .transform((v) => (v === "" ? null : v)),
+    expiryDate: z
+
+        .string()
+        .nullable()
+        .optional()
+        .transform((v) => (v === "" ? null : v)),
+    serialNumbers: z
+        .union([z.array(z.string()), z.string(), z.null()])
+        .optional()
+        .transform((v) => {
+            if (!v) return [];
+            if (typeof v === "string") {
+                try {
+                    const parsed = JSON.parse(v);
+                    return Array.isArray(parsed) ? parsed : [];
+                } catch {
+                    return [];
+                }
+            }
+            return Array.isArray(v) ? v : [];
+        }),
 });
 
 export const transactionDetailInsertSchema = transactionDetailBaseSchema.refine(
@@ -93,8 +122,16 @@ export const transferStockDetailInsertSchema = z.object({
     productDetailId: z.string().min(1, "Product detail is required"),
     baseRatio: z.number(),
     qty: z.number(),
-    batchNumber: z.string().nullable().optional(),
-    expiryDate: z.string().nullable().optional(),
+    batchNumber: z
+        .string()
+        .nullable()
+        .optional()
+        .transform((v) => (v === "" ? null : v)),
+    expiryDate: z
+        .string()
+        .nullable()
+        .optional()
+        .transform((v) => (v === "" ? null : v)),
     serialNumbers: z.array(z.string()).optional(),
 });
 

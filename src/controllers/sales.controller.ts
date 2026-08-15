@@ -5,6 +5,7 @@ import {
     journalEntries,
     journals,
     openInvoices,
+    products,
     transactionDetails,
     transactions,
 } from "@/db/schemas";
@@ -12,7 +13,10 @@ import { addDays } from "@/helpers/add-days";
 import { generateInvoice } from "@/helpers/generate-invoice";
 import { logAction } from "@/utils/log-helper";
 import { updateStockForTransaction } from "@/repositories/stock.repository";
-import { purchaseById } from "@/repositories/transaction.repository";
+import {
+    purchaseById,
+    extractDetails,
+} from "@/repositories/transaction.repository";
 import { CacheService } from "@/services/cache-service";
 import {
     transactionWithDetailInsertSchema,
@@ -64,7 +68,7 @@ export const getSalesById = async (req: Request, res: Response) => {
         }
 
         const { transaction } = rows[0];
-        const details = rows.filter((r) => r.detail).map((r) => r.detail!);
+        const details = extractDetails(rows);
 
         res.status(200).json({ ...transaction, details });
     } catch (error) {
@@ -124,7 +128,7 @@ export const createSales = async (req: Request, res: Response) => {
 
         const rows = await purchaseById(createdSales.id);
         const { transaction } = rows[0];
-        const details = rows.filter((r) => r.detail).map((r) => r.detail!);
+        const details = extractDetails(rows);
 
         return res.status(201).json({
             message: "Sales created successfully",
@@ -421,15 +425,15 @@ export const getPaginatedSales = async (req: Request, res: Response) => {
 
         const searchCondition = search
             ? or(
-                like(
-                    sql`LOWER(${transactions.invoice})`,
-                    `%${search.toLowerCase()}%`,
-                ),
-                like(
-                    sql`LOWER(${contacts.name})`,
-                    `%${search.toLowerCase()}%`,
-                ),
-            )
+                  like(
+                      sql`LOWER(${transactions.invoice})`,
+                      `%${search.toLowerCase()}%`,
+                  ),
+                  like(
+                      sql`LOWER(${contacts.name})`,
+                      `%${search.toLowerCase()}%`,
+                  ),
+              )
             : undefined;
 
         const filterCondition = select
@@ -439,14 +443,14 @@ export const getPaginatedSales = async (req: Request, res: Response) => {
         const dateCondition =
             from && to
                 ? and(
-                    gte(transactions.date, from.toISOString()),
-                    lte(transactions.date, to.toISOString()),
-                )
+                      gte(transactions.date, from.toISOString()),
+                      lte(transactions.date, to.toISOString()),
+                  )
                 : from
-                    ? gte(transactions.date, from.toISOString())
-                    : to
-                        ? lte(transactions.date, to.toISOString())
-                        : undefined;
+                  ? gte(transactions.date, from.toISOString())
+                  : to
+                    ? lte(transactions.date, to.toISOString())
+                    : undefined;
 
         const sortColumns: Record<string, PgColumn> = {
             invoice: transactions.invoice,
@@ -509,32 +513,85 @@ export const getPaginatedSales = async (req: Request, res: Response) => {
 
 export const getPostedSalesByContact = async (req: Request, res: Response) => {
     const { contactId } = req.params;
+    const { search, productId, limit } = req.query;
+    const limitNum = limit ? parseInt(limit as string, 10) : 20;
+
     try {
-        const data = await db
+        const conditions: any[] = [
+            eq(transactions.contactId, contactId),
+            eq(transactions.type, "sales"),
+            or(
+                eq(transactions.status, "posted"),
+                eq(transactions.status, "paid"),
+            ),
+        ];
+
+        if (search && typeof search === "string") {
+            conditions.push(
+                like(
+                    sql`LOWER(${transactions.invoice})`,
+                    `%${search.toLowerCase()}%`,
+                )
+            );
+        }
+
+        if (productId && typeof productId === "string") {
+            const matchingTrans = await db
+                .select({ transactionId: transactionDetails.transactionId })
+                .from(transactionDetails)
+                .where(eq(transactionDetails.productId, productId));
+            
+            const matchingIds = matchingTrans.map((t) => t.transactionId);
+            if (matchingIds.length === 0) {
+                return res.status(200).json([]);
+            }
+            conditions.push(inArray(transactions.id, matchingIds));
+        }
+
+        const invoicesList = await db
             .select({
                 id: transactions.id,
                 invoice: transactions.invoice,
                 date: transactions.date,
                 totalAmount: transactions.totalAmount,
+                subtotal: transactions.subtotal,
+                totalDiscount: transactions.totalDiscount,
+                totalTax: transactions.totalTax,
             })
             .from(transactions)
-            .where(
-                and(
-                    eq(transactions.contactId, contactId),
-                    eq(transactions.type, "sales"),
-                    or(
-                        eq(transactions.status, "posted"),
-                        eq(transactions.status, "paid"),
-                    ),
-                ),
-            )
-            .orderBy(desc(transactions.date));
-        res.status(200).json(data);
+            .where(and(...conditions))
+            .orderBy(desc(transactions.date))
+            .limit(limitNum);
+
+        // Fetch details for preview
+        const result = await Promise.all(
+            invoicesList.map(async (inv) => {
+                const details = await db
+                    .select({
+                        id: transactionDetails.id,
+                        productId: transactionDetails.productId,
+                        productName: products.name,
+                        qty: transactionDetails.qty,
+                        price: transactionDetails.price,
+                        amount: transactionDetails.amount,
+                    })
+                    .from(transactionDetails)
+                    .leftJoin(products, eq(products.id, transactionDetails.productId))
+                    .where(eq(transactionDetails.transactionId, inv.id));
+                return {
+                    ...inv,
+                    details,
+                };
+            })
+        );
+
+        res.status(200).json(result);
     } catch (error) {
         console.error("Error fetching posted sales:", error);
         res.status(500).json({ message: "Failed to fetch posted sales" });
     }
 };
+
 
 export const cancelSales = async (req: Request, res: Response) => {
     const { id } = req.params;
@@ -608,7 +665,10 @@ export const cancelSales = async (req: Request, res: Response) => {
                 batchNumber: detail.batchNumber,
                 expiryDate: detail.expiryDate,
                 serialNumbers: detail.serialNumbers,
-                movementType: original.type === "sales" || original.type === "pos_sales" ? 1 : -1, // IN for sales void, OUT for purchase void
+                movementType:
+                    original.type === "sales" || original.type === "pos_sales"
+                        ? 1
+                        : -1, // IN for sales void, OUT for purchase void
             }));
 
             // Insert Reversed Details
@@ -620,9 +680,9 @@ export const cancelSales = async (req: Request, res: Response) => {
             await updateStockForTransaction(
                 reversal.id,
                 original.type as any,
-                reversedDetails.map(d => ({
+                reversedDetails.map((d) => ({
                     ...d,
-                    qty: Math.abs(d.qty)
+                    qty: Math.abs(d.qty),
                 })) as any,
                 tx,
             );

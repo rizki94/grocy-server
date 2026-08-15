@@ -75,12 +75,14 @@ export async function updateStockForTransaction(
             const isOut = detail.movementType === -1;
 
             if (isIn) {
-                const effectiveCost =
+                const baseRatio = detail.baseRatio && Number(detail.baseRatio) > 0 ? Number(detail.baseRatio) : 1;
+                const rawCost =
                     transactionType === "sales_return"
                         ? (detail.unitCost ?? 0)
                         : ["purchase", "sales", "pos_sales", "transfer_stock", "adjustment"].includes(transactionType)
                             ? (detail.unitCost ?? 0)
                             : 0;
+                const effectiveCostPerBaseUnit = rawCost / baseRatio;
 
                 const [movement] = await tx
                     .insert(stockMovements)
@@ -89,7 +91,7 @@ export async function updateStockForTransaction(
                         transactionId,
                         qty: baseQty,
                         type: "IN",
-                        unitCost: effectiveCost,
+                        unitCost: effectiveCostPerBaseUnit,
                         batchNumber: detail.batchNumber,
                         expiryDate: detail.expiryDate,
                         serialNumber: detail.serialNumber,
@@ -127,7 +129,7 @@ export async function updateStockForTransaction(
                     stockId: stock.id,
                     movementId: movement.id,
                     remainingQty: baseQty,
-                    unitCost: effectiveCost,
+                    unitCost: effectiveCostPerBaseUnit,
                 });
 
                 await tx
@@ -177,8 +179,10 @@ export async function updateStockForTransaction(
                             `Insufficient stock for product: ${product?.name || detail.productId}`,
                         );
                     } else {
-                        // Allow negative stock: use detail.unitCost for the missing quantity
-                        totalCost += remaining * (detail.unitCost || 0);
+                        // Allow negative stock: use detail.unitCost per base unit for the missing quantity
+                        const baseRatio = detail.baseRatio && Number(detail.baseRatio) > 0 ? Number(detail.baseRatio) : 1;
+                        const fallbackCostPerBaseUnit = (detail.unitCost || 0) / baseRatio;
+                        totalCost += remaining * fallbackCostPerBaseUnit;
                         totalUsedQty += remaining;
                         remaining = 0;
                     }

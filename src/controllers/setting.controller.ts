@@ -18,11 +18,12 @@ export const getSettings = async (req: Request, res: Response) => {
 
 export const updateSettings = async (req: Request, res: Response) => {
     try {
-        const { posRound2Digit, allowNegativeStock, roundingDifferenceGlAccountId } = req.body;
+        const { posRound2Digit, allowNegativeStock, enableInventoryTracking, roundingDifferenceGlAccountId } = req.body;
 
         await db.update(settings).set({
             posRound2Digit,
             allowNegativeStock,
+            enableInventoryTracking: enableInventoryTracking ?? true,
             roundingDifferenceGlAccountId,
             updatedAt: new Date(),
         }).where(eq(settings.id, "global"));

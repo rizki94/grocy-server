@@ -6,6 +6,7 @@ export const settings = pgTable("settings", {
     id: text("id").primaryKey(), // just a string key "global"
     posRound2Digit: boolean("pos_round_2_digit").default(false).notNull(),
     allowNegativeStock: boolean("allow_negative_stock").default(false).notNull(),
+    enableInventoryTracking: boolean("enable_inventory_tracking").default(true).notNull(),
     roundingDifferenceGlAccountId: uuid("rounding_difference_gl_account_id").references(() => glAccounts.id),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

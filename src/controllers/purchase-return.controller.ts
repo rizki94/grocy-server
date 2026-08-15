@@ -12,7 +12,7 @@ import { addDays } from "@/helpers/add-days";
 import { generateInvoice } from "@/helpers/generate-invoice";
 import { logAction } from "@/utils/log-helper";
 import { updateStockForTransaction } from "@/repositories/stock.repository";
-import { purchaseById } from "@/repositories/transaction.repository";
+import { purchaseById, extractDetails } from "@/repositories/transaction.repository";
 import { CacheService } from "@/services/cache-service";
 import {
     transactionWithDetailInsertSchema,
@@ -69,7 +69,7 @@ export const getPurchaseReturnById = async (req: Request, res: Response) => {
         }
 
         const { transaction } = rows[0];
-        const details = rows.filter((r) => r.detail).map((r) => r.detail!);
+        const details = extractDetails(rows);
 
         let parent = null;
         if (transaction.parentId) {
@@ -138,7 +138,7 @@ export const createPurchaseReturn = async (req: Request, res: Response) => {
 
         const rows = await purchaseById(createdPurchase.id);
         const { transaction } = rows[0];
-        const responseDetails = rows.filter((r) => r.detail).map((r) => r.detail!);
+        const responseDetails = extractDetails(rows);
 
         return res.status(201).json({
             message: "Purchase created successfully",
@@ -254,6 +254,29 @@ export const postPurchaseReturn = async (req: Request, res: Response) => {
 
     try {
         await db.transaction(async (tx) => {
+            const [existing] = await tx
+                .select()
+                .from(transactions)
+                .where(eq(transactions.id, id));
+
+            if (!existing) throw new Error("Purchase return not found");
+            if (existing.status !== "draft" && existing.status !== "order") {
+                throw new Error(
+                    `Purchase return is already ${existing.status} and cannot be posted again`,
+                );
+            }
+
+            const [existingJournal] = await tx
+                .select()
+                .from(journals)
+                .where(eq(journals.transactionId, id));
+
+            if (existingJournal) {
+                throw new Error(
+                    "A journal has already been posted for this purchase return transaction",
+                );
+            }
+
             const [purchase] = await tx
                 .update(transactions)
                 .set({ status: "posted" })
@@ -261,7 +284,7 @@ export const postPurchaseReturn = async (req: Request, res: Response) => {
                 .returning();
 
             if (!purchase) {
-                return res.status(404).json({ message: "Purchase not found" });
+                throw new Error("Purchase return not found");
             }
 
             const details = await tx
@@ -270,22 +293,30 @@ export const postPurchaseReturn = async (req: Request, res: Response) => {
                 .where(eq(transactionDetails.transactionId, id));
 
             if (!details.length) {
-                return res
-                    .status(400)
-                    .json({ message: "Purchase has no details" });
+                throw new Error("Purchase return has no details");
             }
 
+            // Update Stock (OUT)
             await updateStockForTransaction(id, "purchase_return", details);
 
-            const total = details.reduce(
-                (sum, d) => sum + Number(d.qty) * Number(d.price),
-                0,
-            );
+            // Calculate subtotal, tax, and total amount
+            let calcSubtotal = Number(purchase.subtotal || 0);
+            let calcTax = Number(purchase.totalTax || 0);
+            let calcDiscount = Number(purchase.totalDiscount || 0);
 
-            const mappings = await tx
-                .select()
-                .from(accountMappings)
-                .where(eq(accountMappings.type, "purchase_return"));
+            if (calcTax === 0) {
+                calcTax = details.reduce((sum, d) => {
+                    const linePrice = Number(d.qty || 0) * Number(d.price || 0) - Number(d.discount || 0);
+                    return sum + linePrice * (Number(d.taxRate || 0) / 100);
+                }, 0);
+            }
+
+            if (calcSubtotal === 0) {
+                calcSubtotal = details.reduce((sum, d) => sum + Number(d.qty || 0) * Number(d.price || 0), 0);
+            }
+
+            const netCost = calcSubtotal - calcDiscount;
+            const calcAmount = Number(purchase.totalAmount || (netCost + calcTax));
 
             const [journal] = await tx
                 .insert(journals)
@@ -297,19 +328,48 @@ export const postPurchaseReturn = async (req: Request, res: Response) => {
                 })
                 .returning();
 
-            for (const map of mappings) {
+            // Dynamic GL Account lookup based on account_mappings
+            const purchaseMapping = await tx.select().from(accountMappings).where(eq(accountMappings.type, "purchase"));
+            const taxMapping = await tx.select().from(accountMappings).where(eq(accountMappings.type, "purchase_tax"));
+
+            const inventoryGlCode = purchaseMapping.find((m) => m.side === "debit")?.glAccountCode || "1400";
+            const apGlCode = purchaseMapping.find((m) => m.side === "credit")?.glAccountCode || "2100";
+            const taxGlCode = taxMapping[0]?.glAccountCode || "1500";
+
+            const apGl = (await findGlAccountByCode(apGlCode)) || (await findGlAccountByCode("2100"));
+            const inventoryGl = (await findGlAccountByCode(inventoryGlCode)) || (await findGlAccountByCode("1400"));
+            const taxGl = (await findGlAccountByCode(taxGlCode)) || (await findGlAccountByCode("1500")) || (await findGlAccountByCode("1450"));
+
+            if (calcAmount > 0 && apGl) {
                 await tx.insert(journalEntries).values({
                     journalId: journal.id,
-                    glAccountId: await findGlAccountByCode(map.glAccountCode),
-                    debit:
-                        map.side === "debit" ? Number(purchase.totalAmount) : 0,
-                    credit:
-                        map.side === "credit"
-                            ? Number(purchase.totalAmount)
-                            : 0,
-                    note: `${map.note} ${purchase.invoice}`,
+                    glAccountId: apGl,
+                    debit: calcAmount,
+                    credit: 0,
+                    note: `Hutang Retur Pembelian ${purchase.invoice}`,
                 });
             }
+
+            if (netCost > 0 && inventoryGl) {
+                await tx.insert(journalEntries).values({
+                    journalId: journal.id,
+                    glAccountId: inventoryGl,
+                    debit: 0,
+                    credit: netCost,
+                    note: `Persediaan Retur Pembelian ${purchase.invoice}`,
+                });
+            }
+
+            if (calcTax > 0 && taxGl) {
+                await tx.insert(journalEntries).values({
+                    journalId: journal.id,
+                    glAccountId: taxGl,
+                    debit: 0,
+                    credit: calcTax,
+                    note: `PPN Masukan Retur Pembelian ${purchase.invoice}`,
+                });
+            }
+
 
             // Payable for Purchase Return (Debit Note)
             await tx.insert(openInvoices).values({
@@ -317,10 +377,11 @@ export const postPurchaseReturn = async (req: Request, res: Response) => {
                 contactId: purchase.contactId,
                 type: "payable",
                 dueDate: addDays(purchase.date, purchase.termOfPayment),
-                amount: -Number(purchase.totalAmount),
+                amount: -calcAmount,
                 paidAmount: 0,
                 status: "open",
             });
+
 
             logAction(req, {
                 action: "update",
@@ -331,18 +392,19 @@ export const postPurchaseReturn = async (req: Request, res: Response) => {
             });
 
             return res.status(200).json({
-                message: "Purchase posted successfully",
+                message: "Purchase return posted successfully",
                 purchase: purchase,
             });
         });
     } catch (error: any) {
-        console.error("Post purchase error:", error);
+        console.error("Post purchase return error:", error);
         return res.status(error instanceof Error ? 400 : 500).json({
-            message: error.message || "Failed to post purchase",
+            message: error.message || "Failed to post purchase return",
             error,
         });
     }
 };
+
 
 export const getPaginatedPurchaseReturns = async (
     req: Request,
@@ -464,7 +526,7 @@ export const cancelPurchaseReturn = async (req: Request, res: Response) => {
 
             const original = originalRows[0].transaction;
             const originalDetails = originalRows
-                .filter((r) => r.detail)
+                .filter((r) => r.detail?.id != null)
                 .map((r) => r.detail!);
 
             if (original.status === "cancelled") {

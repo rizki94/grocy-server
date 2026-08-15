@@ -7,8 +7,12 @@ import {
     journals,
     openInvoices,
     products,
+    stockMovements,
+    stocks,
     transactionDetails,
     transactions,
+    users,
+    warehouses,
 } from "@/db/schemas";
 import { and, eq, sql, gte, lte, desc, inArray, asc } from "drizzle-orm";
 
@@ -18,8 +22,8 @@ export const getProfitLoss = async (req: Request, res: Response) => {
         const fromDate = from
             ? (from as string).split("T")[0]
             : new Date(new Date().getFullYear(), 0, 1)
-                .toISOString()
-                .split("T")[0];
+                  .toISOString()
+                  .split("T")[0];
         const toDate = to
             ? (to as string).split("T")[0]
             : new Date().toISOString().split("T")[0];
@@ -78,8 +82,10 @@ export const getProfitLoss = async (req: Request, res: Response) => {
 export const getBalanceSheet = async (req: Request, res: Response) => {
     try {
         const { date } = req.query;
-        const toDate = (typeof date === 'string' ? date : String(date || '')).split("T")[0] ||
-            new Date().toISOString().split("T")[0];
+        const toDate =
+            (typeof date === "string" ? date : String(date || "")).split(
+                "T",
+            )[0] || new Date().toISOString().split("T")[0];
 
         console.log(`[getBalanceSheet] Generating as of ${toDate}`);
 
@@ -177,8 +183,8 @@ export const getProductProfitability = async (req: Request, res: Response) => {
         const fromDate = from
             ? (from as string).split("T")[0]
             : new Date(new Date().getFullYear(), 0, 1)
-                .toISOString()
-                .split("T")[0];
+                  .toISOString()
+                  .split("T")[0];
         const toDate = to
             ? (to as string).split("T")[0]
             : new Date().toISOString().split("T")[0];
@@ -217,7 +223,10 @@ export const getProductProfitability = async (req: Request, res: Response) => {
         res.json(report);
     } catch (error: any) {
         console.error("Product Profitability Error:", error);
-        res.status(500).json({ message: "Failed to generate report", error: error.message });
+        res.status(500).json({
+            message: "Failed to generate report",
+            error: error.message,
+        });
     }
 };
 
@@ -231,17 +240,21 @@ export const getGlBalances = async (req: Request, res: Response) => {
             const toDate = (to as string).split("T")[0];
             dateCondition = and(
                 gte(sql`DATE(${journals.date})`, fromDate),
-                lte(sql`DATE(${journals.date})`, toDate)
+                lte(sql`DATE(${journals.date})`, toDate),
             );
         } else {
             // Default to current month if no dates provided
-            const fromDate = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+            const fromDate = new Date(
+                new Date().getFullYear(),
+                new Date().getMonth(),
+                1,
+            )
                 .toISOString()
                 .split("T")[0];
             const toDate = new Date().toISOString().split("T")[0];
             dateCondition = and(
                 gte(sql`DATE(${journals.date})`, fromDate),
-                lte(sql`DATE(${journals.date})`, toDate)
+                lte(sql`DATE(${journals.date})`, toDate),
             );
         }
 
@@ -258,22 +271,22 @@ export const getGlBalances = async (req: Request, res: Response) => {
             .from(glAccounts)
             .leftJoin(
                 journalEntries,
-                eq(journalEntries.glAccountId, glAccounts.id)
+                eq(journalEntries.glAccountId, glAccounts.id),
             )
             .leftJoin(
                 journals,
                 and(
                     eq(journalEntries.journalId, journals.id),
                     eq(journals.status, "posted"),
-                    dateCondition
-                )
+                    dateCondition,
+                ),
             )
             .groupBy(
                 glAccounts.id,
                 glAccounts.code,
                 glAccounts.name,
                 glAccounts.type,
-                glAccounts.isActive
+                glAccounts.isActive,
             )
             .orderBy(asc(glAccounts.code));
 
@@ -309,11 +322,249 @@ export const getCustomerOutstandingAr = async (req: Request, res: Response) => {
                 ),
             )
             .groupBy(contacts.id, contacts.name)
-            .orderBy(desc(sql`sum(${openInvoices.amount} - ${openInvoices.paidAmount})`));
+            .orderBy(
+                desc(
+                    sql`sum(${openInvoices.amount} - ${openInvoices.paidAmount})`,
+                ),
+            );
 
         res.json(report);
     } catch (error: any) {
         console.error("Customer Outstanding AR Error:", error);
-        res.status(500).json({ message: "Failed to generate report", error: error.message });
+        res.status(500).json({
+            message: "Failed to generate report",
+            error: error.message,
+        });
+    }
+};
+
+export const getPivotData = async (req: Request, res: Response) => {
+    try {
+        const { source, from, to } = req.query;
+        const sourceType = (source as string) || "sales";
+
+        const fromDate = from ? (from as string).split("T")[0] : undefined;
+        const toDate = to ? (to as string).split("T")[0] : undefined;
+
+        const formatDateParts = (dateInput: any) => {
+            if (!dateInput)
+                return {
+                    dateStr: "",
+                    year: "",
+                    quarter: "",
+                    month: "",
+                    dayOfWeek: "",
+                };
+            const d = new Date(dateInput);
+            if (isNaN(d.getTime()))
+                return {
+                    dateStr: String(dateInput),
+                    year: "",
+                    quarter: "",
+                    month: "",
+                    dayOfWeek: "",
+                };
+            const year = d.getFullYear().toString();
+            const monthNum = String(d.getMonth() + 1).padStart(2, "0");
+            const month = `${year}-${monthNum}`;
+            const q = Math.floor(d.getMonth() / 3) + 1;
+            const quarter = `${year}-Q${q}`;
+            const days = [
+                "Sunday",
+                "Monday",
+                "Tuesday",
+                "Wednesday",
+                "Thursday",
+                "Friday",
+                "Saturday",
+            ];
+            const dayOfWeek = days[d.getDay()] || "";
+            const dateStr = `${year}-${monthNum}-${String(d.getDate()).padStart(2, "0")}`;
+            return { dateStr, year, quarter, month, dayOfWeek };
+        };
+
+        if (sourceType === "sales" || sourceType === "purchases") {
+            const txType = sourceType === "sales" ? "sales" : "purchase";
+            const conditions = [eq(transactions.type, txType)];
+            if (fromDate)
+                conditions.push(gte(sql`DATE(${transactions.date})`, fromDate));
+            if (toDate)
+                conditions.push(lte(sql`DATE(${transactions.date})`, toDate));
+
+            const rawList = await db
+                .select({
+                    id: transactionDetails.id,
+                    transactionId: transactions.id,
+                    invoice: transactions.invoice,
+                    date: transactions.date,
+                    status: transactions.status,
+                    contactName: contacts.name,
+                    productName: products.name,
+                    warehouseName: warehouses.name,
+                    userName: users.displayName,
+                    qty: transactionDetails.qty,
+                    price: transactionDetails.price,
+                    discount: transactionDetails.discount,
+                    unitCost: transactionDetails.unitCost,
+                    totalCost: transactionDetails.totalCost,
+                    amount: transactionDetails.amount,
+                    taxRate: transactionDetails.taxRate,
+                })
+                .from(transactionDetails)
+                .innerJoin(
+                    transactions,
+                    eq(transactionDetails.transactionId, transactions.id),
+                )
+                .leftJoin(contacts, eq(transactions.contactId, contacts.id))
+                .leftJoin(
+                    products,
+                    eq(transactionDetails.productId, products.id),
+                )
+                .leftJoin(
+                    warehouses,
+                    eq(transactionDetails.warehouseId, warehouses.id),
+                )
+                .leftJoin(users, eq(transactions.userId, users.id))
+                .where(and(...conditions));
+
+            const rows = rawList.map((r) => {
+                const dates = formatDateParts(r.date);
+                const revenue = Number(r.amount || 0);
+                const cogs = Number(r.totalCost || 0);
+                const profit = revenue - cogs;
+                return {
+                    ...r,
+                    ...dates,
+                    contactName: r.contactName || "N/A",
+                    productName: r.productName || "N/A",
+                    warehouseName: r.warehouseName || "N/A",
+                    userName: r.userName || "N/A",
+                    qty: Number(r.qty || 0),
+                    price: Number(r.price || 0),
+                    discount: Number(r.discount || 0),
+                    unitCost: Number(r.unitCost || 0),
+                    totalCost: cogs,
+                    amount: revenue,
+                    profit,
+                    taxRate: Number(r.taxRate || 0),
+                };
+            });
+
+            return res.json({ source: sourceType, count: rows.length, rows });
+        }
+
+        if (sourceType === "stock_movements") {
+            const conditions = [];
+            if (fromDate)
+                conditions.push(
+                    gte(sql`DATE(${stockMovements.createdAt})`, fromDate),
+                );
+            if (toDate)
+                conditions.push(
+                    lte(sql`DATE(${stockMovements.createdAt})`, toDate),
+                );
+
+            const rawList = await db
+                .select({
+                    id: stockMovements.id,
+                    createdAt: stockMovements.createdAt,
+                    type: stockMovements.type,
+                    qty: stockMovements.qty,
+                    unitCost: stockMovements.unitCost,
+                    batchNumber: stockMovements.batchNumber,
+                    expiryDate: stockMovements.expiryDate,
+                    note: stockMovements.note,
+                    productName: products.name,
+                    warehouseName: warehouses.name,
+                    invoice: transactions.invoice,
+                    contactName: contacts.name,
+                })
+                .from(stockMovements)
+                .innerJoin(stocks, eq(stockMovements.stockId, stocks.id))
+                .innerJoin(products, eq(stocks.productId, products.id))
+                .leftJoin(warehouses, eq(stocks.warehouseId, warehouses.id))
+                .leftJoin(
+                    transactions,
+                    eq(stockMovements.transactionId, transactions.id),
+                )
+                .leftJoin(contacts, eq(transactions.contactId, contacts.id))
+                .where(conditions.length ? and(...conditions) : undefined);
+
+            const rows = rawList.map((r) => {
+                const dates = formatDateParts(r.createdAt);
+                const qty = Number(r.qty || 0);
+                const unitCost = Number(r.unitCost || 0);
+                const totalCost = Math.abs(qty * unitCost);
+                return {
+                    ...r,
+                    ...dates,
+                    productName: r.productName || "N/A",
+                    warehouseName: r.warehouseName || "N/A",
+                    invoice: r.invoice || "N/A",
+                    contactName: r.contactName || "N/A",
+                    qty,
+                    unitCost,
+                    totalCost,
+                };
+            });
+
+            return res.json({ source: sourceType, count: rows.length, rows });
+        }
+
+        if (sourceType === "journals") {
+            const conditions = [eq(journals.status, "posted")];
+            if (fromDate)
+                conditions.push(gte(sql`DATE(${journals.date})`, fromDate));
+            if (toDate)
+                conditions.push(lte(sql`DATE(${journals.date})`, toDate));
+
+            const rawList = await db
+                .select({
+                    id: journalEntries.id,
+                    journalId: journals.id,
+                    journalDate: journals.date,
+                    description: journals.description,
+                    accountCode: glAccounts.code,
+                    accountName: glAccounts.name,
+                    accountType: glAccounts.type,
+                    debit: journalEntries.debit,
+                    credit: journalEntries.credit,
+                    memo: journalEntries.note,
+                })
+                .from(journalEntries)
+                .innerJoin(journals, eq(journalEntries.journalId, journals.id))
+                .innerJoin(
+                    glAccounts,
+                    eq(journalEntries.glAccountId, glAccounts.id),
+                )
+                .where(and(...conditions));
+
+            const rows = rawList.map((r) => {
+                const dates = formatDateParts(r.journalDate);
+                const debit = Number(r.debit || 0);
+                const credit = Number(r.credit || 0);
+                const netAmount = debit - credit;
+                return {
+                    ...r,
+                    ...dates,
+                    accountCode: r.accountCode || "",
+                    accountName: r.accountName || "",
+                    accountType: r.accountType || "",
+                    debit,
+                    credit,
+                    netAmount,
+                };
+            });
+
+            return res.json({ source: sourceType, count: rows.length, rows });
+        }
+
+        return res.status(400).json({ message: "Invalid source parameter" });
+    } catch (error: any) {
+        console.error("Pivot Data Error:", error);
+        res.status(500).json({
+            message: "Failed to fetch pivot data",
+            error: error.message,
+        });
     }
 };

@@ -18,6 +18,7 @@ import { productDetails, products } from "./product.schema";
 import { warehouses } from "./warehouse.schema";
 import { relations } from "drizzle-orm";
 import { posSessions } from "./pos-session.schema";
+import { returnReasons } from "./return-reason.schema";
 
 export const transactionStatusEnum = pgEnum(
     "transaction_status",
@@ -78,6 +79,7 @@ export const transactionDetails = pgTable("transaction_details", {
     batchNumber: text("batch_number"),
     expiryDate: date("expiry_date"),
     serialNumbers: text("serial_numbers").array(),
+    returnReasonId: uuid("return_reason_id").references(() => returnReasons.id),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
         .defaultNow()
@@ -123,5 +125,10 @@ export const transactionDetailsRelations = relations(
             fields: [transactionDetails.productDetailId],
             references: [productDetails.id],
         }),
+        returnReason: one(returnReasons, {
+            fields: [transactionDetails.returnReasonId],
+            references: [returnReasons.id],
+        }),
     }),
 );
+

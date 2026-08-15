@@ -5,6 +5,7 @@ import {
     journalEntries,
     journals,
     openInvoices,
+    products,
     transactionDetails,
     transactions,
 } from "@/db/schemas";
@@ -12,7 +13,7 @@ import { addDays } from "@/helpers/add-days";
 import { generateInvoice } from "@/helpers/generate-invoice";
 import { logAction } from "@/utils/log-helper";
 import { updateStockForTransaction } from "@/repositories/stock.repository";
-import { purchaseById } from "@/repositories/transaction.repository";
+import { purchaseById, extractDetails } from "@/repositories/transaction.repository";
 import { CacheService } from "@/services/cache-service";
 import {
     transactionWithDetailInsertSchema,
@@ -69,7 +70,7 @@ export const getPurchaseById = async (req: Request, res: Response) => {
         }
 
         const { transaction } = rows[0];
-        const details = rows.filter((r) => r.detail).map((r) => r.detail!);
+        const details = extractDetails(rows);
 
         res.status(200).json({ ...transaction, details });
     } catch (error) {
@@ -129,7 +130,7 @@ export const createPurchase = async (req: Request, res: Response) => {
 
         const rows = await purchaseById(createdPurchase.id);
         const { transaction } = rows[0];
-        const details = rows.filter((r) => r.detail).map((r) => r.detail!);
+        const details = extractDetails(rows);
 
         return res.status(201).json({
             message: "Purchase created successfully",
@@ -521,32 +522,85 @@ export const getPostedPurchasesByContact = async (
     res: Response,
 ) => {
     const { contactId } = req.params;
+    const { search, productId, limit } = req.query;
+    const limitNum = limit ? parseInt(limit as string, 10) : 20;
+
     try {
-        const data = await db
+        const conditions: any[] = [
+            eq(transactions.contactId, contactId),
+            eq(transactions.type, "purchase"),
+            or(
+                eq(transactions.status, "posted"),
+                eq(transactions.status, "paid"),
+            ),
+        ];
+
+        if (search && typeof search === "string") {
+            conditions.push(
+                like(
+                    sql`LOWER(${transactions.invoice})`,
+                    `%${search.toLowerCase()}%`,
+                )
+            );
+        }
+
+        if (productId && typeof productId === "string") {
+            const matchingTrans = await db
+                .select({ transactionId: transactionDetails.transactionId })
+                .from(transactionDetails)
+                .where(eq(transactionDetails.productId, productId));
+            
+            const matchingIds = matchingTrans.map((t) => t.transactionId);
+            if (matchingIds.length === 0) {
+                return res.status(200).json([]);
+            }
+            conditions.push(inArray(transactions.id, matchingIds));
+        }
+
+        const invoicesList = await db
             .select({
                 id: transactions.id,
                 invoice: transactions.invoice,
                 date: transactions.date,
                 totalAmount: transactions.totalAmount,
+                subtotal: transactions.subtotal,
+                totalDiscount: transactions.totalDiscount,
+                totalTax: transactions.totalTax,
             })
             .from(transactions)
-            .where(
-                and(
-                    eq(transactions.contactId, contactId),
-                    eq(transactions.type, "purchase"),
-                    or(
-                        eq(transactions.status, "posted"),
-                        eq(transactions.status, "paid"),
-                    ),
-                ),
-            )
-            .orderBy(desc(transactions.date));
-        res.status(200).json(data);
+            .where(and(...conditions))
+            .orderBy(desc(transactions.date))
+            .limit(limitNum);
+
+        // Fetch details for preview
+        const result = await Promise.all(
+            invoicesList.map(async (inv) => {
+                const details = await db
+                    .select({
+                        id: transactionDetails.id,
+                        productId: transactionDetails.productId,
+                        productName: products.name,
+                        qty: transactionDetails.qty,
+                        price: transactionDetails.price,
+                        amount: transactionDetails.amount,
+                    })
+                    .from(transactionDetails)
+                    .leftJoin(products, eq(products.id, transactionDetails.productId))
+                    .where(eq(transactionDetails.transactionId, inv.id));
+                return {
+                    ...inv,
+                    details,
+                };
+            })
+        );
+
+        res.status(200).json(result);
     } catch (error) {
         console.error("Error fetching posted purchases:", error);
         res.status(500).json({ message: "Failed to fetch posted purchases" });
     }
 };
+
 
 export const cancelPurchase = async (req: Request, res: Response) => {
     const { id } = req.params;

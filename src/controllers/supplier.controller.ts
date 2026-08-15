@@ -111,6 +111,8 @@ export const createSupplier = async (req: Request, res: Response) => {
             .values({
                 ...supplier,
                 creditLimit: supplier.creditLimit?.toString(),
+                latitude: supplier.latitude?.toString(),
+                longitude: supplier.longitude?.toString(),
                 contactType: "supplier",
             })
             .returning();
@@ -118,6 +120,8 @@ export const createSupplier = async (req: Request, res: Response) => {
         const transformedSupplier = {
             ...createdSupplier,
             creditLimit: createdSupplier.creditLimit ? Number(createdSupplier.creditLimit) : 0,
+            latitude: createdSupplier.latitude != null ? Number(createdSupplier.latitude) : null,
+            longitude: createdSupplier.longitude != null ? Number(createdSupplier.longitude) : null,
         };
 
         logAction(req, {
@@ -174,6 +178,8 @@ export const updateSupplier = async (req: Request, res: Response) => {
             .set({
                 ...supplier,
                 creditLimit: supplier.creditLimit?.toString(),
+                latitude: supplier.latitude?.toString(),
+                longitude: supplier.longitude?.toString(),
                 contactType: "supplier",
             })
             .where(eq(contacts.id, supplier.id))

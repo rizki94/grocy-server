@@ -9,6 +9,7 @@ import {
     uuid,
 } from "drizzle-orm/pg-core";
 import { priceGroups } from "./price-group.schema";
+import { routeGroups } from "./route-group.schema";
 
 export const contactTypeEnum = pgEnum("contact_type", ["customer", "supplier"]);
 
@@ -25,6 +26,10 @@ export const contacts = pgTable("contacts", {
     phone: text("phone").notNull(),
     email: text("email").notNull(),
     priceGroupId: uuid("price_group_id").references(() => priceGroups.id),
+    latitude: decimal("latitude", { precision: 10, scale: 8 }),
+    longitude: decimal("longitude", { precision: 11, scale: 8 }),
+    routeGroupId: uuid("route_group_id").references(() => routeGroups.id),
+    salespersonId: uuid("salesperson_id"),
     isActive: boolean("is_active").notNull().default(true),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")

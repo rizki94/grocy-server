@@ -12,6 +12,10 @@ export const contactInsertSchema = z.object({
     phone: z.string().min(4, "Phone minimum 4 characters"),
     email: z.string().min(4, "Email minimum 4 characters"),
     priceGroupId: z.string().uuid().optional().nullable(),
+    latitude: z.number().optional().nullable(),
+    longitude: z.number().optional().nullable(),
+    routeGroupId: z.string().uuid().optional().nullable(),
+    salespersonId: z.string().uuid().optional().nullable(),
     isActive: z.boolean(),
 });
 

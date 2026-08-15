@@ -12,7 +12,7 @@ export const openInvoices = pgTable("open_invoices", {
     dueDate: date("due_date").notNull(),
     amount: decimalAsNumber(12, 2)("amount").notNull().default(0),
     paidAmount: decimalAsNumber(12, 2)("paid_amount").notNull().default(0),
-    status: text("status", { enum: ["open", "partial", "paid"] })
+    status: text("status", { enum: ["open", "partial", "paid", "overpaid"] })
         .notNull()
         .default("open"),
     createdAt: timestamp("created_at").defaultNow().notNull(),

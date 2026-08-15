@@ -12,7 +12,7 @@ import { addDays } from "@/helpers/add-days";
 import { generateInvoice } from "@/helpers/generate-invoice";
 import { logAction } from "@/utils/log-helper";
 import { updateStockForTransaction } from "@/repositories/stock.repository";
-import { purchaseById } from "@/repositories/transaction.repository";
+import { purchaseById, extractDetails } from "@/repositories/transaction.repository";
 import { CacheService } from "@/services/cache-service";
 import {
     transactionWithDetailInsertSchema,
@@ -68,7 +68,7 @@ export const getSalesReturnById = async (req: Request, res: Response) => {
         }
 
         const { transaction } = rows[0];
-        const details = rows.filter((r) => r.detail).map((r) => r.detail!);
+        const details = extractDetails(rows);
 
         let parent = null;
         if (transaction.parentId) {
@@ -137,7 +137,7 @@ export const createSalesReturn = async (req: Request, res: Response) => {
 
         const rows = await purchaseById(createdSales.id);
         const { transaction } = rows[0];
-        const responseDetails = rows.filter((r) => r.detail).map((r) => r.detail!);
+        const responseDetails = extractDetails(rows);
 
         return res.status(201).json({
             message: "Sales created successfully",
@@ -253,6 +253,29 @@ export const postSalesReturn = async (req: Request, res: Response) => {
 
     try {
         await db.transaction(async (tx) => {
+            const [existing] = await tx
+                .select()
+                .from(transactions)
+                .where(eq(transactions.id, id));
+
+            if (!existing) throw new Error("Sales return not found");
+            if (existing.status !== "draft" && existing.status !== "order") {
+                throw new Error(
+                    `Sales return is already ${existing.status} and cannot be posted again`,
+                );
+            }
+
+            const [existingJournal] = await tx
+                .select()
+                .from(journals)
+                .where(eq(journals.transactionId, id));
+
+            if (existingJournal) {
+                throw new Error(
+                    "A journal has already been posted for this sales return transaction",
+                );
+            }
+
             const [sales] = await tx
                 .update(transactions)
                 .set({ status: "posted" })
@@ -260,7 +283,7 @@ export const postSalesReturn = async (req: Request, res: Response) => {
                 .returning();
 
             if (!sales) {
-                return res.status(404).json({ message: "Sales not found" });
+                throw new Error("Sales return not found");
             }
 
             const details = await tx
@@ -269,24 +292,30 @@ export const postSalesReturn = async (req: Request, res: Response) => {
                 .where(eq(transactionDetails.transactionId, id));
 
             if (!details.length) {
-                return res
-                    .status(400)
-                    .json({ message: "Sales has no details" });
+                throw new Error("Sales return has no details");
             }
 
-            // OUT
+            // Update Stock (IN)
             await updateStockForTransaction(id, "sales_return", details);
 
-            const total = details.reduce(
-                (sum, d) => sum + Number(d.qty) * Number(d.price),
-                0,
-            );
+            // Calculate subtotal, tax, and total amount
+            let calcSubtotal = Number(sales.subtotal || 0);
+            let calcTax = Number(sales.totalTax || 0);
+            let calcDiscount = Number(sales.totalDiscount || 0);
 
-            // Fetch metrics for Sales
-            const mappings = await tx
-                .select()
-                .from(accountMappings)
-                .where(eq(accountMappings.type, "sales_return"));
+            if (calcTax === 0) {
+                calcTax = details.reduce((sum, d) => {
+                    const linePrice = Number(d.qty || 0) * Number(d.price || 0) - Number(d.discount || 0);
+                    return sum + linePrice * (Number(d.taxRate || 0) / 100);
+                }, 0);
+            }
+
+            if (calcSubtotal === 0) {
+                calcSubtotal = details.reduce((sum, d) => sum + Number(d.qty || 0) * Number(d.price || 0), 0);
+            }
+
+            const netRevenue = calcSubtotal - calcDiscount;
+            const calcAmount = Number(sales.totalAmount || (netRevenue + calcTax));
 
             const [journal] = await tx
                 .insert(journals)
@@ -298,15 +327,76 @@ export const postSalesReturn = async (req: Request, res: Response) => {
                 })
                 .returning();
 
-            for (const map of mappings) {
+            // Dynamic GL Account lookup based on account_mappings
+            const salesMapping = await tx.select().from(accountMappings).where(eq(accountMappings.type, "sales"));
+            const taxMapping = await tx.select().from(accountMappings).where(eq(accountMappings.type, "sales_tax"));
+
+            const revenueGlCode = salesMapping.find((m) => m.side === "credit")?.glAccountCode || "4100";
+            const arGlCode = salesMapping.find((m) => m.side === "debit")?.glAccountCode || "1300";
+            const taxGlCode = taxMapping[0]?.glAccountCode || "2200";
+
+            const salesReturnGl = (await findGlAccountByCode("4200")) || (await findGlAccountByCode(revenueGlCode));
+            const arGl = (await findGlAccountByCode(arGlCode)) || (await findGlAccountByCode("1200"));
+            const taxGl = (await findGlAccountByCode(taxGlCode)) || (await findGlAccountByCode("2200")) || (await findGlAccountByCode("2150"));
+            const inventoryGl = await findGlAccountByCode("1400");
+            const cogsGl = await findGlAccountByCode("5100");
+
+            if (netRevenue > 0 && salesReturnGl) {
                 await tx.insert(journalEntries).values({
                     journalId: journal.id,
-                    glAccountId: await findGlAccountByCode(map.glAccountCode),
-                    debit: map.side === "debit" ? Number(sales.totalAmount) : 0,
-                    credit:
-                        map.side === "credit" ? Number(sales.totalAmount) : 0,
-                    note: `${map.note} ${sales.invoice}`,
+                    glAccountId: salesReturnGl,
+                    debit: netRevenue,
+                    credit: 0,
+                    note: `Retur Penjualan ${sales.invoice}`,
                 });
+            }
+
+            if (calcTax > 0 && taxGl) {
+                await tx.insert(journalEntries).values({
+                    journalId: journal.id,
+                    glAccountId: taxGl,
+                    debit: calcTax,
+                    credit: 0,
+                    note: `PPN Retur Penjualan ${sales.invoice}`,
+                });
+            }
+
+            if (calcAmount > 0 && arGl) {
+                await tx.insert(journalEntries).values({
+                    journalId: journal.id,
+                    glAccountId: arGl,
+                    debit: 0,
+                    credit: calcAmount,
+                    note: `Piutang Retur Penjualan ${sales.invoice}`,
+                });
+            }
+
+
+            // Reverse COGS and re-enter Inventory
+            const totalCogs = details.reduce(
+                (sum, d) => sum + Number(d.totalCost || 0),
+                0,
+            );
+
+            if (totalCogs > 0) {
+                if (inventoryGl) {
+                    await tx.insert(journalEntries).values({
+                        journalId: journal.id,
+                        glAccountId: inventoryGl,
+                        debit: totalCogs,
+                        credit: 0,
+                        note: `Persediaan Retur Penjualan ${sales.invoice}`,
+                    });
+                }
+                if (cogsGl) {
+                    await tx.insert(journalEntries).values({
+                        journalId: journal.id,
+                        glAccountId: cogsGl,
+                        debit: 0,
+                        credit: totalCogs,
+                        note: `Pengurangan HPP Retur Penjualan ${sales.invoice}`,
+                    });
+                }
             }
 
             // Receivable for Sales Return (Credit Note)
@@ -315,10 +405,11 @@ export const postSalesReturn = async (req: Request, res: Response) => {
                 contactId: sales.contactId,
                 type: "receivable",
                 dueDate: addDays(sales.date, sales.termOfPayment),
-                amount: -Number(sales.totalAmount),
+                amount: -calcAmount,
                 paidAmount: 0,
                 status: "open",
             });
+
 
             logAction(req, {
                 action: "update",
@@ -329,17 +420,18 @@ export const postSalesReturn = async (req: Request, res: Response) => {
             });
 
             return res.status(200).json({
-                message: "Sales posted successfully",
+                message: "Sales return posted successfully",
                 sales: sales,
             });
         });
     } catch (error: any) {
-        console.error("Post sales error:", error);
+        console.error("Post sales return error:", error);
         return res
             .status(error instanceof Error ? 400 : 500)
-            .json({ message: error.message || "Failed to post sales", error });
+            .json({ message: error.message || "Failed to post sales return", error });
     }
 };
+
 
 export const getPaginatedSalesReturns = async (req: Request, res: Response) => {
     try {
@@ -455,7 +547,7 @@ export const cancelSalesReturn = async (req: Request, res: Response) => {
 
             const original = originalRows[0].transaction;
             const originalDetails = originalRows
-                .filter((r) => r.detail)
+                .filter((r) => r.detail?.id != null)
                 .map((r) => r.detail!);
 
             if (original.status === "cancelled") {

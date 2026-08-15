@@ -50,6 +50,13 @@
       "when": 1784528395096,
       "tag": "0006_stale_goblin_queen",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1784859999703,
+      "tag": "0007_remarkable_angel",
+      "breakpoints": true
     }
   ]
 }

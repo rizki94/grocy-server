@@ -33,7 +33,13 @@ import settingRouter from "./routes/setting.route";
 import salesReturnRouter from "./routes/sales-return.route";
 import purchaseReturnRouter from "./routes/purchase-return.route";
 import messageRouter from "./routes/message.route";
-import notificationRouter from "./routes/notification.route";
+
+import returnReasonRouter from "./routes/return-reason.route";
+
+import routeGroupRouter from "./routes/route-group.route";
+import { truckRouter } from "./routes/truck.route";
+import { driverRouter } from "./routes/driver.route";
+import { dispatchRouter } from "./routes/dispatch.route";
 
 import { refresh } from "./controllers/auth.controller";
 
@@ -75,11 +81,17 @@ route.use("/journals", journalRoute);
 route.use("/stock-adjustments", stockAdjustmentRouter);
 route.use("/warehouses", warehouseRouter);
 route.use("/price-groups", priceGroupRouter);
+route.use("/route-groups", routeGroupRouter);
+route.use("/trucks", truckRouter);
+route.use("/drivers", driverRouter);
+route.use("/dispatch", dispatchRouter);
 route.use("/pos-sessions", posSessionRouter);
 route.use("/pos", posRouter);
 route.use("/payment-methods", paymentMethodRouter);
 route.use("/sales-return", salesReturnRouter);
 route.use("/purchase-return", purchaseReturnRouter);
+route.use("/return-reasons", returnReasonRouter);
 route.use("/settings", settingRouter);
 route.use("/chat", messageRouter);
-route.use("/notifications", notificationRouter);
+
+

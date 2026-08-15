@@ -5,7 +5,7 @@ import {
 } from "@/db/schemas";
 import { generateInvoice } from "@/helpers/generate-invoice";
 import { updateStockForTransaction } from "@/repositories/stock.repository";
-import { purchaseById } from "@/repositories/transaction.repository";
+import { purchaseById, extractDetails } from "@/repositories/transaction.repository";
 import {
     transferStockWithDetailInsertSchema,
     transferStockWithDetailUpdateSchema,
@@ -38,7 +38,7 @@ export const getTransferById = async (req: Request, res: Response) => {
             return res.status(404).json({ error: "Transfer not found" });
         }
         const { transaction } = rows[0];
-        const allDetails = rows.filter((r) => r.detail).map((r) => r.detail!);
+        const allDetails = extractDetails(rows);
         
         const outDetails = allDetails.filter(d => d.movementType === -1);
         const inDetails = allDetails.filter(d => d.movementType === 1);

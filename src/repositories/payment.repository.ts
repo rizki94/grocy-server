@@ -172,26 +172,42 @@ export async function postPayment(id: string) {
             const currentPaid = Number(openItem.paidAmount || 0);
             const paying = Number(line.amount);
             const total = Number(openItem.amount);
-            
+
             const newPaidAmount = currentPaid + paying;
-            // Use small epsilon or rounding to avoid floating point issues (2 decimal places)
-            const isFullyPaid = Math.round(newPaidAmount * 100) >= Math.round(total * 100);
+
+            // Determine new status:
+            //   overpaid  → paid more than the invoice (negative balance owed back to customer)
+            //   paid      → exactly or fully covered (within floating-point tolerance)
+            //   partial   → still some remaining
+            let newStatus: "open" | "partial" | "paid" | "overpaid";
+            const paidCents = Math.round(newPaidAmount * 100);
+            const totalCents = Math.round(total * 100);
+
+            if (paidCents > totalCents) {
+                newStatus = "overpaid";
+            } else if (paidCents >= totalCents) {
+                newStatus = "paid";
+            } else {
+                newStatus = "partial";
+            }
 
             await tx
                 .update(openInvoices)
                 .set({
                     paidAmount: newPaidAmount,
-                    status: isFullyPaid ? "paid" : "partial",
+                    status: newStatus,
                     updatedAt: new Date(),
                 })
                 .where(eq(openInvoices.id, line.openInvoiceId));
 
             if (openItem.transactionId) {
+                // Map overpaid → paid on the transaction level (the invoice itself is settled)
+                const txStatus = newStatus === "overpaid" ? "paid" : newStatus;
                 await tx
                     .update(transactions)
-                    .set({ 
-                        status: isFullyPaid ? "paid" : "partial",
-                        updatedAt: new Date()
+                    .set({
+                        status: txStatus,
+                        updatedAt: new Date(),
                     })
                     .where(eq(transactions.id, openItem.transactionId));
             }
@@ -250,22 +266,43 @@ export async function postPayment(id: string) {
             .where(eq(paymentAccounts.paymentId, id));
 
         for (const acc of paymentAccs) {
+            const amt = Number(acc.amount);
+            let debit = 0;
+            let credit = 0;
+            if (payment.type === "receivable") {
+                if (amt >= 0) debit = amt;
+                else credit = Math.abs(amt);
+            } else {
+                if (amt >= 0) credit = amt;
+                else debit = Math.abs(amt);
+            }
+
             await tx.insert(journalEntries).values({
                 journalId: journal.id,
                 glAccountId: acc.glAccountId!,
-                debit: payment.type === "receivable" ? Number(acc.amount) : 0,
-                credit: payment.type === "payable" ? Number(acc.amount) : 0,
+                debit,
+                credit,
                 note: `Penerimaan/Pengeluaran Kas/Bank ${concatenatedInvoices}`,
             });
         }
 
         // 2. AP/AR Side (Balancing)
+        const totalAmt = Number(payment.totalAmount);
+        let arApDebit = 0;
+        let arApCredit = 0;
+        if (payment.type === "receivable") {
+            if (totalAmt >= 0) arApCredit = totalAmt;
+            else arApDebit = Math.abs(totalAmt);
+        } else {
+            if (totalAmt >= 0) arApDebit = totalAmt;
+            else arApCredit = Math.abs(totalAmt);
+        }
+
         await tx.insert(journalEntries).values({
             journalId: journal.id,
             glAccountId: apArMapping.glAccountId,
-            debit: payment.type === "payable" ? Number(payment.totalAmount) : 0,
-            credit:
-                payment.type === "receivable" ? Number(payment.totalAmount) : 0,
+            debit: arApDebit,
+            credit: arApCredit,
             note: `Pelunasan ${payment.type === "payable" ? "Hutang" : "Piutang"} ${concatenatedInvoices}`,
         });
 
@@ -303,19 +340,22 @@ export async function voidPayment(id: string) {
                 .from(openInvoices)
                 .where(eq(openInvoices.id, line.openInvoiceId));
 
-            if (!openItem) continue; // Should not happen, but safe check
+            if (!openItem) continue;
 
             const newPaidAmount =
                 Number(openItem.paidAmount || 0) - Number(line.amount);
 
-            // Validate non-negative
             const safePaidAmount = newPaidAmount < 0 ? 0 : newPaidAmount;
             const totalAmount = Number(openItem.amount);
+            const paidCents = Math.round(safePaidAmount * 100);
+            const totalCents = Math.round(totalAmount * 100);
 
-            let newStatus: "open" | "partial" | "paid" = "open";
-            if (safePaidAmount >= totalAmount) {
+            let newStatus: "open" | "partial" | "paid" | "overpaid" = "open";
+            if (paidCents > totalCents) {
+                newStatus = "overpaid"; // still overpaid after reversal (edge case)
+            } else if (paidCents >= totalCents) {
                 newStatus = "paid";
-            } else if (safePaidAmount > 0) {
+            } else if (paidCents > 0) {
                 newStatus = "partial";
             }
 
@@ -327,10 +367,9 @@ export async function voidPayment(id: string) {
                 })
                 .where(eq(openInvoices.id, line.openInvoiceId));
 
-            // 3. Update Transaction Status
             if (openItem.transactionId) {
                 let transStatus: any = "posted";
-                if (newStatus === "paid") transStatus = "paid";
+                if (newStatus === "paid" || newStatus === "overpaid") transStatus = "paid";
                 else if (newStatus === "partial") transStatus = "partial";
 
                 await tx
@@ -388,25 +427,43 @@ export async function voidPayment(id: string) {
             .where(eq(paymentAccounts.paymentId, id));
 
         for (const acc of paymentAccs) {
+            const amt = Number(acc.amount);
+            let debit = 0;
+            let credit = 0;
+            if (payment.type === "receivable") {
+                if (amt >= 0) credit = amt;
+                else debit = Math.abs(amt);
+            } else {
+                if (amt >= 0) debit = amt;
+                else credit = Math.abs(amt);
+            }
+
             await tx.insert(journalEntries).values({
                 journalId: journal.id,
                 glAccountId: acc.glAccountId!,
-                debit: payment.type === "payable" ? Number(acc.amount) : 0,
-                credit: payment.type === "receivable" ? Number(acc.amount) : 0,
+                debit,
+                credit,
                 note: `Void Payment fund`,
             });
         }
 
         // AP/AR Side (Restore Debt)
-        // Original Post: Debit AP (Payable).
-        // Void: Credit AP (Payable).
+        const totalAmt = Number(payment.totalAmount);
+        let arApDebit = 0;
+        let arApCredit = 0;
+        if (payment.type === "receivable") {
+            if (totalAmt >= 0) arApDebit = totalAmt;
+            else arApCredit = Math.abs(totalAmt);
+        } else {
+            if (totalAmt >= 0) arApCredit = totalAmt;
+            else arApDebit = Math.abs(totalAmt);
+        }
+
         await tx.insert(journalEntries).values({
             journalId: journal.id,
             glAccountId: apArMapping.glAccountId,
-            debit:
-                payment.type === "receivable" ? Number(payment.totalAmount) : 0,
-            credit:
-                payment.type === "payable" ? Number(payment.totalAmount) : 0,
+            debit: arApDebit,
+            credit: arApCredit,
             note: `Void Payment clearing ${payment.type}`,
         });
 

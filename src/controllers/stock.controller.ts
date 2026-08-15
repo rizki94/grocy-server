@@ -53,14 +53,14 @@ export const getMonitoringStock = async (req: Request, res: Response) => {
                 .from(stocks)
                 .innerJoin(products, eq(stocks.productId, products.id))
                 .leftJoin(warehouses, eq(warehouses.id, stocks.warehouseId))
-                .innerJoin(
+                .leftJoin(
                     productDetails,
                     and(
                         eq(productDetails.productId, products.id),
-                        eq(productDetails.isDefault, true),
+                        eq(productDetails.baseRatio, 1),
                     ),
                 )
-                .innerJoin(
+                .leftJoin(
                     productUnits,
                     eq(productUnits.id, productDetails.unitId),
                 )
@@ -170,14 +170,14 @@ export const getMovementStocks = async (req: Request, res: Response) => {
                 .innerJoin(stocks, eq(stocks.id, stockMovements.stockId))
                 .leftJoin(warehouses, eq(warehouses.id, stocks.warehouseId))
                 .innerJoin(products, eq(stocks.productId, products.id))
-                .innerJoin(
+                .leftJoin(
                     productDetails,
                     and(
                         eq(productDetails.productId, products.id),
-                        eq(productDetails.isDefault, true),
+                        eq(productDetails.baseRatio, 1),
                     ),
                 )
-                .innerJoin(
+                .leftJoin(
                     productUnits,
                     eq(productUnits.id, productDetails.unitId),
                 )

@@ -1,5 +1,7 @@
 import { db } from "@/db";
 import { contacts } from "@/db/schemas/contact.schema";
+import { routeGroups } from "@/db/schemas/route-group.schema";
+import { users } from "@/db/schemas/user.schema";
 import { logAction } from "@/utils/log-helper";
 import { CacheService } from "@/services/cache-service";
 import {
@@ -26,6 +28,8 @@ export async function getAllCustomers(req: Request, res: Response) {
         const transformedData = data.map((c: any) => ({
             ...c,
             creditLimit: c.creditLimit ? Number(c.creditLimit) : 0,
+            latitude: c.latitude != null ? Number(c.latitude) : null,
+            longitude: c.longitude != null ? Number(c.longitude) : null,
         }));
         res.status(200).json(transformedData);
     } catch (error) {
@@ -47,11 +51,13 @@ export const getCustomerById = async (req: Request, res: Response) => {
         const transformedUser = {
             ...user,
             creditLimit: user.creditLimit ? Number(user.creditLimit) : 0,
+            latitude: user.latitude != null ? Number(user.latitude) : null,
+            longitude: user.longitude != null ? Number(user.longitude) : null,
         };
         res.status(200).json(transformedUser);
     } catch (error) {
-        console.error("Error fetching customers:", error);
-        res.status(500).json({ message: "Failed to fetch customers" });
+        console.error("Error fetching customer:", error);
+        res.status(500).json({ message: "Failed to fetch customer" });
     }
 };
 
@@ -81,6 +87,8 @@ export const createCustomer = async (req: Request, res: Response) => {
             .values({
                 ...parsed.data,
                 creditLimit: parsed.data.creditLimit?.toString(),
+                latitude: parsed.data.latitude?.toString(),
+                longitude: parsed.data.longitude?.toString(),
                 contactType: "customer",
             })
             .returning();
@@ -88,6 +96,8 @@ export const createCustomer = async (req: Request, res: Response) => {
         const transformedCustomer = {
             ...createdCustomer,
             creditLimit: createdCustomer.creditLimit ? Number(createdCustomer.creditLimit) : 0,
+            latitude: createdCustomer.latitude != null ? Number(createdCustomer.latitude) : null,
+            longitude: createdCustomer.longitude != null ? Number(createdCustomer.longitude) : null,
         };
 
         logAction(req, {
@@ -118,11 +128,13 @@ export const updateCustomer = async (req: Request, res: Response) => {
         });
     }
 
+    const customer = parsed.data;
+
     try {
         const oldCustomer = await db
             .select()
             .from(contacts)
-            .where(eq(contacts.id, parsed.data.id))
+            .where(eq(contacts.id, customer.id))
             .then((r) => r[0]);
         if (!oldCustomer)
             return res.status(404).json({ message: "Customer not found" });
@@ -130,38 +142,43 @@ export const updateCustomer = async (req: Request, res: Response) => {
         const existingName = await db
             .select()
             .from(contacts)
-            .where(eq(contacts.name, parsed.data.name ?? ""))
+            .where(eq(contacts.name, customer.name ?? ""))
             .then((res) => res[0]);
 
-        if (existingName && existingName.id !== parsed.data.id) {
+        if (existingName && existingName.id !== customer.id) {
             return res.status(409).json({ message: "Customer already exists" });
         }
 
         const [updatedCustomer] = await db
             .update(contacts)
             .set({
-                ...parsed.data,
-                creditLimit: parsed.data.creditLimit?.toString()
+                ...customer,
+                creditLimit: customer.creditLimit?.toString(),
+                latitude: customer.latitude?.toString(),
+                longitude: customer.longitude?.toString(),
+                contactType: "customer",
             })
-            .where(eq(contacts.id, parsed.data.id))
+            .where(eq(contacts.id, customer.id))
             .returning();
 
         const transformedCustomer = {
             ...updatedCustomer,
             creditLimit: updatedCustomer.creditLimit ? Number(updatedCustomer.creditLimit) : 0,
+            latitude: updatedCustomer.latitude != null ? Number(updatedCustomer.latitude) : null,
+            longitude: updatedCustomer.longitude != null ? Number(updatedCustomer.longitude) : null,
         };
 
         logAction(req, {
             action: "update",
-            table: "contacts",
+            table: "customers",
             oldData: oldCustomer,
             data: transformedCustomer,
             userId: req.user!.id,
-            msg: `updated customer #${updatedCustomer.id}`,
+            msg: `updated customer #${transformedCustomer.id}`,
         });
 
         return res.status(200).json({
-            message: `${updatedCustomer.name} updated successfully`,
+            message: `${transformedCustomer.name} updated successfully`,
             customer: transformedCustomer,
         });
     } catch (error) {
@@ -180,9 +197,16 @@ export const getActiveCustomers = async (req: Request, res: Response) => {
                     .select({
                         id: contacts.id,
                         name: contacts.name,
+                        address: contacts.address,
                         termOfPayment: contacts.termOfPayment,
-                        priceGroupId: contacts.priceGroupId,
                         creditLimit: contacts.creditLimit,
+                        phone: contacts.phone,
+                        email: contacts.email,
+                        priceGroupId: contacts.priceGroupId,
+                        latitude: contacts.latitude,
+                        longitude: contacts.longitude,
+                        routeGroupId: contacts.routeGroupId,
+                        salespersonId: contacts.salespersonId,
                     })
                     .from(contacts)
                     .where(
@@ -195,6 +219,8 @@ export const getActiveCustomers = async (req: Request, res: Response) => {
                 return results.map((c: any) => ({
                     ...c,
                     creditLimit: c.creditLimit ? Number(c.creditLimit) : 0,
+                    latitude: c.latitude != null ? Number(c.latitude) : null,
+                    longitude: c.longitude != null ? Number(c.longitude) : null,
                 }));
             },
         );
@@ -234,8 +260,30 @@ export const getPaginatedCustomers = async (req: Request, res: Response) => {
 
         const [customerList, totalCount] = await Promise.all([
             db
-                .select()
+                .select({
+                    id: contacts.id,
+                    contactType: contacts.contactType,
+                    name: contacts.name,
+                    address: contacts.address,
+                    phone: contacts.phone,
+                    email: contacts.email,
+                    termOfPayment: contacts.termOfPayment,
+                    creditLimit: contacts.creditLimit,
+                    invoiceLimit: contacts.invoiceLimit,
+                    priceGroupId: contacts.priceGroupId,
+                    latitude: contacts.latitude,
+                    longitude: contacts.longitude,
+                    routeGroupId: contacts.routeGroupId,
+                    routeGroupName: routeGroups.name,
+                    salespersonId: contacts.salespersonId,
+                    salespersonName: users.displayName,
+                    isActive: contacts.isActive,
+                    createdAt: contacts.createdAt,
+                    updatedAt: contacts.updatedAt,
+                })
                 .from(contacts)
+                .leftJoin(routeGroups, eq(contacts.routeGroupId, routeGroups.id))
+                .leftJoin(users, eq(contacts.salespersonId, users.id))
                 .where(
                     and(eq(contacts.contactType, "customer"), searchCondition),
                 )
@@ -253,6 +301,8 @@ export const getPaginatedCustomers = async (req: Request, res: Response) => {
         const transformedRows = customerList.map((c: any) => ({
             ...c,
             creditLimit: c.creditLimit ? Number(c.creditLimit) : 0,
+            latitude: c.latitude != null ? Number(c.latitude) : null,
+            longitude: c.longitude != null ? Number(c.longitude) : null,
         }));
 
         res.json({

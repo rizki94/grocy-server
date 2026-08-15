@@ -56,7 +56,7 @@ export const openInvoicesInsertSchema = z.object({
     dueDate: z.string(),
     amount: z.number(),
     paidAmount: z.number(),
-    status: z.enum(["open", "partial", "paid"]),
+    status: z.enum(["open", "partial", "paid", "overpaid"]),
 });
 
 export type PaymentWithLinesInsert = z.infer<

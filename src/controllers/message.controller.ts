@@ -653,3 +653,90 @@ export const removeParticipant = async (req: Request, res: Response) => {
         res.status(500).json({ error: "Failed to remove participant" });
     }
 };
+
+// Get total unread message count for badge across all conversations
+export const getTotalUnreadCount = async (req: Request, res: Response) => {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    try {
+        const myParticipations = await db
+            .select({
+                conversationId: conversationParticipants.conversationId,
+                lastReadAt: conversationParticipants.lastReadAt,
+            })
+            .from(conversationParticipants)
+            .where(eq(conversationParticipants.userId, userId));
+
+        if (myParticipations.length === 0) {
+            return res.status(200).json({ unreadCount: 0 });
+        }
+
+        let totalUnread = 0;
+        for (const p of myParticipations) {
+            const lastRead = p.lastReadAt;
+            let countRes;
+            if (lastRead) {
+                [countRes] = await db
+                    .select({ count: sql<number>`count(*)` })
+                    .from(messages)
+                    .where(
+                        and(
+                            eq(messages.conversationId, p.conversationId),
+                            sql`${messages.createdAt} > ${lastRead}`,
+                            ne(messages.senderId, userId)
+                        )
+                    );
+            } else {
+                [countRes] = await db
+                    .select({ count: sql<number>`count(*)` })
+                    .from(messages)
+                    .where(
+                        and(
+                            eq(messages.conversationId, p.conversationId),
+                            ne(messages.senderId, userId)
+                        )
+                    );
+            }
+            totalUnread += Number(countRes?.count || 0);
+        }
+
+        res.status(200).json({ unreadCount: totalUnread });
+    } catch (error) {
+        console.error("Error getting total unread count:", error);
+        res.status(500).json({ error: "Failed to get unread count" });
+    }
+};
+
+// Update group conversation name or avatar
+export const updateGroupDetails = async (req: Request, res: Response) => {
+    const userId = req.user?.id;
+    const { conversationId } = req.params;
+    const { name, avatar } = req.body;
+
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    try {
+        const updateData: any = {};
+        if (name !== undefined) updateData.name = name;
+        if (avatar !== undefined) updateData.avatar = avatar;
+
+        await db
+            .update(conversations)
+            .set(updateData)
+            .where(eq(conversations.id, conversationId));
+
+        const allParticipants = await db
+            .select({ userId: conversationParticipants.userId })
+            .from(conversationParticipants)
+            .where(eq(conversationParticipants.conversationId, conversationId));
+
+        const allUserIds = allParticipants.map((p) => p.userId);
+        updateRealtimeConversation(allUserIds, "conversation:updated", { conversationId, ...updateData });
+
+        res.status(200).json({ success: true });
+    } catch (error) {
+        console.error("Error updating group details:", error);
+        res.status(500).json({ error: "Failed to update group" });
+    }
+};

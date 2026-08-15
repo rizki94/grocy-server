@@ -152,15 +152,24 @@ export const getProductById = async (req: Request, res: Response) => {
             .from(productImages)
             .where(eq(productImages.productId, id));
 
-        const stockInfo = await db
-            .select({
-                currentQty: stocks.qty,
-                avgCost: sql<number>`COALESCE(SUM(${stockLayers.remainingQty} * ${stockLayers.unitCost}) / NULLIF(SUM(${stockLayers.remainingQty}), 0), 0)`,
-            })
+        // Total base qty = sum across all stock records (warehouses/batches)
+        const qtyResult = await db
+            .select({ totalQty: sql<number>`COALESCE(SUM(${stocks.qty}), 0)` })
             .from(stocks)
-            .leftJoin(stockLayers, eq(stockLayers.stockId, stocks.id))
             .where(eq(stocks.productId, id))
-            .groupBy(stocks.id, stocks.qty)
+            .then((r) => r[0]);
+
+        // FIFO avg cost = weighted average from stock layers
+        const costResult = await db
+            .select({
+                avgCost: sql<number>`COALESCE(
+                    SUM(${stockLayers.remainingQty} * ${stockLayers.unitCost}) /
+                    NULLIF(SUM(${stockLayers.remainingQty}), 0),
+                0)`,
+            })
+            .from(stockLayers)
+            .innerJoin(stocks, eq(stockLayers.stockId, stocks.id))
+            .where(eq(stocks.productId, id))
             .then((r) => r[0]);
 
         const result = {
@@ -168,7 +177,11 @@ export const getProductById = async (req: Request, res: Response) => {
             details: detailsWithPrices,
             attributes,
             images,
-            inventory: stockInfo || { currentQty: 0, avgCost: 0 },
+            inventory: {
+                // baseQty is in the smallest base unit (baseRatio = 1)
+                baseQty: Number(qtyResult?.totalQty ?? 0),
+                avgCostBase: Number(costResult?.avgCost ?? 0),
+            },
         };
 
         return res.json(result);
@@ -605,8 +618,35 @@ export const getPaginatedProducts = async (req: Request, res: Response) => {
 
         const [productList, [totalCount]] = await Promise.all([
             db
-                .select()
+                .select({
+                    id: products.id,
+                    name: products.name,
+                    description: products.description,
+                    isActive: products.isActive,
+                    taxId: products.taxId,
+                    taxName: taxes.name,
+                    taxRate: taxes.rate,
+                    useBatch: products.useBatch,
+                    useExpiry: products.useExpiry,
+                    useSerialNumber: products.useSerialNumber,
+                    reorderLevel: products.reorderLevel,
+                    createdAt: products.createdAt,
+                    updatedAt: products.updatedAt,
+                    image: sql<string | null>`(
+                        SELECT url FROM ${productImages} 
+                        WHERE ${productImages.productId} = ${products.id} 
+                        ORDER BY created_at ASC 
+                        LIMIT 1
+                    )`,
+                    barcode: sql<string | null>`(
+                        SELECT barcode FROM ${productDetails} 
+                        WHERE ${productDetails.productId} = ${products.id} 
+                        ORDER BY level ASC 
+                        LIMIT 1
+                    )`,
+                })
                 .from(products)
+                .leftJoin(taxes, eq(taxes.id, products.taxId))
                 .where(searchCondition)
                 .orderBy(order === "desc" ? desc(sortColumn) : asc(sortColumn))
                 .limit(pageSize)
