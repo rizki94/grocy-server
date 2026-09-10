@@ -1,7 +1,10 @@
 {
     "name": "grocy-server",
     "version": "1.0.0",
-    "main": "index.js",
+    "main": "dist/index.js",
+    "_moduleAliases": {
+        "@": "./dist"
+    },
     "scripts": {
         "dev": "nodemon --watch src --ext ts,js --delay 500ms --exec \"npx tsx src/index.ts\"",
         "build": "tsc --project tsconfig.json",
@@ -41,6 +44,7 @@
         "express": "^5.1.0",
         "express-session": "^1.18.2",
         "jsonwebtoken": "^9.0.2",
+        "module-alias": "^2.3.4",
         "multer": "^2.0.2",
         "passport": "^0.7.0",
         "passport-local": "^1.0.0",

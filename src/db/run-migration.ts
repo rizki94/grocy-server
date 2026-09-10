@@ -1,11 +1,7 @@
-import { db } from "./index.js";
+import { db } from "./index";
 import { sql } from "drizzle-orm";
 import { readFileSync } from "fs";
-import { fileURLToPath } from "url";
-import { dirname, join } from "path";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+import { join } from "path";
 
 async function runMigration() {
     try {
