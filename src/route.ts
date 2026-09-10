@@ -40,6 +40,8 @@ import routeGroupRouter from "./routes/route-group.route";
 import { truckRouter } from "./routes/truck.route";
 import { driverRouter } from "./routes/driver.route";
 import { dispatchRouter } from "./routes/dispatch.route";
+import marketplaceRouter from "./routes/marketplace.route";
+import bridgeImportRouter from "./routes/bridge-import.route";
 
 import { refresh } from "./controllers/auth.controller";
 
@@ -48,6 +50,8 @@ export const route = Router();
 route.use("/auth", authRouter);
 route.get("/refresh", refresh);
 route.use("/bridge", bridgeRouter);
+route.use("/bridge-import", bridgeImportRouter);
+route.use("/marketplaces", marketplaceRouter);
 route.use(isAuthenticated);
 route.get("/me", (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);

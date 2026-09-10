@@ -30,6 +30,8 @@ export const getProfitLoss = async (req: Request, res: Response) => {
 
         const report = await db
             .select({
+                accountId: glAccounts.id,
+                accountCode: glAccounts.code,
                 accountName: glAccounts.name,
                 accountType: glAccounts.type,
                 debit: sql<number>`COALESCE(sum(${journalEntries.debit}), 0)`,
@@ -49,26 +51,35 @@ export const getProfitLoss = async (req: Request, res: Response) => {
                     inArray(glAccounts.type, ["income", "expense"]),
                 ),
             )
-            .groupBy(glAccounts.id, glAccounts.name, glAccounts.type);
+            .groupBy(glAccounts.id, glAccounts.code, glAccounts.name, glAccounts.type)
+            .orderBy(asc(glAccounts.code));
 
-        const income = report.filter((r) => r.accountType === "income");
-        const expense = report.filter((r) => r.accountType === "expense");
+        const income = report
+            .filter((r) => r.accountType === "income")
+            .map((r) => ({
+                ...r,
+                amount: Number(r.credit || 0) - Number(r.debit || 0),
+            }));
 
-        const totalIncome = income.reduce(
-            (sum, r) => sum + (Number(r.credit || 0) - Number(r.debit || 0)),
-            0,
-        );
-        const totalExpense = expense.reduce(
-            (sum, r) => sum + (Number(r.debit || 0) - Number(r.credit || 0)),
-            0,
-        );
+        const expense = report
+            .filter((r) => r.accountType === "expense")
+            .map((r) => ({
+                ...r,
+                amount: Number(r.debit || 0) - Number(r.credit || 0),
+            }));
+
+        const totalIncome = income.reduce((sum, r) => sum + r.amount, 0);
+        const totalExpense = expense.reduce((sum, r) => sum + r.amount, 0);
+        const netProfit = totalIncome - totalExpense;
 
         res.json({
+            fromDate,
+            toDate,
             income,
             expense,
             totalIncome,
             totalExpense,
-            netProfit: totalIncome - totalExpense,
+            netProfit,
         });
     } catch (error: any) {
         console.error("Profit Loss Error:", error);
@@ -87,10 +98,10 @@ export const getBalanceSheet = async (req: Request, res: Response) => {
                 "T",
             )[0] || new Date().toISOString().split("T")[0];
 
-        console.log(`[getBalanceSheet] Generating as of ${toDate}`);
-
         const report = await db
             .select({
+                accountId: glAccounts.id,
+                accountCode: glAccounts.code,
                 accountName: glAccounts.name,
                 accountType: glAccounts.type,
                 debit: sql<number>`COALESCE(sum(${journalEntries.debit}), 0)`,
@@ -109,11 +120,29 @@ export const getBalanceSheet = async (req: Request, res: Response) => {
                     inArray(glAccounts.type, ["asset", "liability", "equity"]),
                 ),
             )
-            .groupBy(glAccounts.id, glAccounts.name, glAccounts.type);
+            .groupBy(glAccounts.id, glAccounts.code, glAccounts.name, glAccounts.type)
+            .orderBy(asc(glAccounts.code));
 
-        const asset = report.filter((r) => r.accountType === "asset");
-        const liability = report.filter((r) => r.accountType === "liability");
-        const equity = report.filter((r) => r.accountType === "equity");
+        const asset = report
+            .filter((r) => r.accountType === "asset")
+            .map((r) => ({
+                ...r,
+                amount: Number(r.debit) - Number(r.credit),
+            }));
+
+        const liability = report
+            .filter((r) => r.accountType === "liability")
+            .map((r) => ({
+                ...r,
+                amount: Number(r.credit) - Number(r.debit),
+            }));
+
+        const equity = report
+            .filter((r) => r.accountType === "equity")
+            .map((r) => ({
+                ...r,
+                amount: Number(r.credit) - Number(r.debit),
+            }));
 
         // Calculate Net Profit to date to balance the BS
         const plReport = await db
@@ -145,21 +174,15 @@ export const getBalanceSheet = async (req: Request, res: Response) => {
             return sum;
         }, 0);
 
-        const totalAsset = asset.reduce(
-            (sum, r) => sum + (Number(r.debit) - Number(r.credit)),
-            0,
-        );
-        const totalLiability = liability.reduce(
-            (sum, r) => sum + (Number(r.credit) - Number(r.debit)),
-            0,
-        );
-        const totalEquity =
-            equity.reduce(
-                (sum, r) => sum + (Number(r.credit) - Number(r.debit)),
-                0,
-            ) + currentProfit;
+        const totalAsset = asset.reduce((sum, r) => sum + r.amount, 0);
+        const totalLiability = liability.reduce((sum, r) => sum + r.amount, 0);
+        const totalEquity = equity.reduce((sum, r) => sum + r.amount, 0) + currentProfit;
+
+        const discrepancy = totalAsset - (totalLiability + totalEquity);
+        const isBalanced = Math.abs(discrepancy) < 0.01;
 
         res.json({
+            asOfDate: toDate,
             asset,
             liability,
             equity,
@@ -167,6 +190,8 @@ export const getBalanceSheet = async (req: Request, res: Response) => {
             totalAsset,
             totalLiability,
             totalEquity,
+            isBalanced,
+            discrepancy,
         });
     } catch (error: any) {
         console.error("Balance Sheet Error:", error);

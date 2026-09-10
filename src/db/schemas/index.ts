@@ -25,4 +25,4 @@ export * from "./truck.schema";
 export * from "./driver.schema";
 export * from "./delivery.schema";
 export * from "./return-reason.schema";
-
+export * from "./marketplace.schema";

@@ -19,6 +19,7 @@ import { warehouses } from "./warehouse.schema";
 import { relations } from "drizzle-orm";
 import { posSessions } from "./pos-session.schema";
 import { returnReasons } from "./return-reason.schema";
+import { marketplaces } from "./marketplace.schema";
 
 export const transactionStatusEnum = pgEnum(
     "transaction_status",
@@ -32,6 +33,7 @@ export const transactions = pgTable("transactions", {
     type: transactionTypeEnum("type").notNull(),
     invoice: text("invoice").notNull().unique(),
     contactId: uuid("contact_id").references(() => contacts.id),
+    marketplaceId: uuid("marketplace_id").references(() => marketplaces.id),
     date: date("date").notNull(),
     termOfPayment: smallint("term_of_payment").notNull().default(0),
     reference: text("reference"),
