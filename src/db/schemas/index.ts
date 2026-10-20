@@ -19,8 +19,6 @@ export * from "./route-group.schema";
 export * from "./pos-session.schema";
 export * from "./payment-method.schema";
 export * from "./setting.schema";
-export * from "./message.schema";
-export * from "./notification.schema";
 export * from "./truck.schema";
 export * from "./driver.schema";
 export * from "./delivery.schema";

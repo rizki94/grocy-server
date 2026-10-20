@@ -32,7 +32,6 @@ import bridgeRouter from "./routes/bridge.route";
 import settingRouter from "./routes/setting.route";
 import salesReturnRouter from "./routes/sales-return.route";
 import purchaseReturnRouter from "./routes/purchase-return.route";
-import messageRouter from "./routes/message.route";
 
 import returnReasonRouter from "./routes/return-reason.route";
 
@@ -42,6 +41,7 @@ import { driverRouter } from "./routes/driver.route";
 import { dispatchRouter } from "./routes/dispatch.route";
 import marketplaceRouter from "./routes/marketplace.route";
 import bridgeImportRouter from "./routes/bridge-import.route";
+import pickingListRouter from "./routes/picking-list.route";
 
 import { refresh } from "./controllers/auth.controller";
 
@@ -96,6 +96,6 @@ route.use("/sales-return", salesReturnRouter);
 route.use("/purchase-return", purchaseReturnRouter);
 route.use("/return-reasons", returnReasonRouter);
 route.use("/settings", settingRouter);
-route.use("/chat", messageRouter);
+route.use("/picking-list", pickingListRouter);
 
 

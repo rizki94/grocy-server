@@ -1,4 +1,9 @@
-import "module-alias/register";
+import moduleAlias from "module-alias";
+import path from "path";
+
+// Automatically resolve @ to src in development (tsx) or dist in compiled build
+(moduleAlias as any).addAlias("@", path.resolve(__dirname));
+
 import "dotenv/config";
 import express from "express";
 import { route } from "./route";
@@ -10,9 +15,6 @@ import { notFound } from "./middleware/not-found";
 
 import { logger } from "./logger";
 import pinoHttp from "pino-http";
-
-import { createServer } from "http";
-import { initSocketServer } from "./services/socket.service";
 
 const app = express();
 app.set("etag", false);
@@ -60,9 +62,6 @@ app.use("/uploads", express.static("uploads"));
 app.use(notFound);
 app.use(errorHandler);
 
-const httpServer = createServer(app);
-initSocketServer(httpServer);
-
-httpServer.listen(process.env.SERVER_PORT || 3001, () => {
+app.listen(process.env.SERVER_PORT || 3001, () => {
     console.log(`🚀 Server running on port ${process.env.SERVER_PORT || 3001}`);
 });

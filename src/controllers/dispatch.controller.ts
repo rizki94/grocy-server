@@ -12,6 +12,7 @@ import {
     deliveryItems,
     drivers,
     trucks,
+    warehouses,
 } from "@/db/schemas";
 import { eq, inArray, and, gte, lte, sql, notInArray, desc, like, or } from "drizzle-orm";
 import { parseTableQuery } from "@/services/table-query";
@@ -548,9 +549,14 @@ export const getBatchPrintData = async (req: Request, res: Response) => {
                     price: transactionDetails.price,
                     discount: transactionDetails.discount,
                     amount: transactionDetails.amount,
+                    productId: transactionDetails.productId,
+                    productDetailId: transactionDetails.productDetailId,
                     productName: products.name,
                     productCode: productDetails.skuId,
+                    barcode: productDetails.barcode,
                     unitName: productUnits.name,
+                    unitAbbr: productUnits.abbreviation,
+                    warehouseName: warehouses.name,
                 })
                 .from(transactionDetails)
                 .innerJoin(
@@ -559,6 +565,10 @@ export const getBatchPrintData = async (req: Request, res: Response) => {
                 )
                 .innerJoin(products, eq(products.id, productDetails.productId))
                 .innerJoin(productUnits, eq(productUnits.id, productDetails.unitId))
+                .leftJoin(
+                    warehouses,
+                    eq(warehouses.id, transactionDetails.warehouseId),
+                )
                 .where(inArray(transactionDetails.transactionId, invoiceIds));
         }
 
@@ -576,5 +586,115 @@ export const getBatchPrintData = async (req: Request, res: Response) => {
         return res
             .status(500)
             .json({ message: "Failed to fetch batch print data" });
+    }
+};
+
+export const getAllBatchPrintData = async (req: Request, res: Response) => {
+    try {
+        const { date } = req.query;
+        if (!date) {
+            return res.status(400).json({ message: "Date is required" });
+        }
+
+        const deliveryRows = await db
+            .select({
+                id: deliveries.id,
+                loadNumber: deliveries.loadNumber,
+                deliveryDate: deliveries.deliveryDate,
+                status: deliveries.status,
+                driverId: deliveries.driverId,
+                driverName: drivers.name,
+                driverColor: drivers.color,
+                truckId: deliveries.truckId,
+                truckName: trucks.name,
+                truckPlate: trucks.licensePlate,
+            })
+            .from(deliveries)
+            .innerJoin(drivers, eq(drivers.id, deliveries.driverId))
+            .innerJoin(trucks, eq(trucks.id, deliveries.truckId))
+            .where(eq(deliveries.deliveryDate, String(date)))
+            .orderBy(drivers.name);
+
+        if (deliveryRows.length === 0) {
+            return res.json({ date, deliveries: [] });
+        }
+
+        const deliveryIds = deliveryRows.map((d) => d.id);
+
+        const items = await db
+            .select({
+                deliveryId: deliveryItems.deliveryId,
+                sequence: deliveryItems.sequence,
+                invoiceId: transactions.id,
+                invoice: transactions.invoice,
+                date: transactions.date,
+                totalAmount: transactions.totalAmount,
+                subtotal: transactions.subtotal,
+                totalDiscount: transactions.totalDiscount,
+                totalTax: transactions.totalTax,
+                customerName: contacts.name,
+                customerAddress: contacts.address,
+                customerPhone: contacts.phone,
+                routeGroupName: routeGroups.name,
+            })
+            .from(deliveryItems)
+            .innerJoin(
+                transactions,
+                eq(transactions.id, deliveryItems.transactionId),
+            )
+            .innerJoin(contacts, eq(contacts.id, transactions.contactId))
+            .leftJoin(routeGroups, eq(routeGroups.id, contacts.routeGroupId))
+            .where(inArray(deliveryItems.deliveryId, deliveryIds))
+            .orderBy(deliveryItems.deliveryId, deliveryItems.sequence);
+
+        const invoiceIds = items.map((i) => i.invoiceId);
+        let lineItems: any[] = [];
+        if (invoiceIds.length > 0) {
+            lineItems = await db
+                .select({
+                    transactionId: transactionDetails.transactionId,
+                    qty: transactionDetails.qty,
+                    price: transactionDetails.price,
+                    discount: transactionDetails.discount,
+                    amount: transactionDetails.amount,
+                    productId: transactionDetails.productId,
+                    productDetailId: transactionDetails.productDetailId,
+                    productName: products.name,
+                    productCode: productDetails.skuId,
+                    barcode: productDetails.barcode,
+                    unitName: productUnits.name,
+                    unitAbbr: productUnits.abbreviation,
+                    warehouseName: warehouses.name,
+                })
+                .from(transactionDetails)
+                .innerJoin(
+                    productDetails,
+                    eq(productDetails.id, transactionDetails.productDetailId),
+                )
+                .innerJoin(products, eq(products.id, productDetails.productId))
+                .innerJoin(productUnits, eq(productUnits.id, productDetails.unitId))
+                .leftJoin(
+                    warehouses,
+                    eq(warehouses.id, transactionDetails.warehouseId),
+                )
+                .where(inArray(transactionDetails.transactionId, invoiceIds));
+        }
+
+        const invoicesWithDetails = items.map((inv) => ({
+            ...inv,
+            details: lineItems.filter((l) => l.transactionId === inv.invoiceId),
+        }));
+
+        const result = deliveryRows.map((del) => ({
+            delivery: del,
+            invoices: invoicesWithDetails.filter((i) => i.deliveryId === del.id),
+        }));
+
+        return res.json({ date, deliveries: result });
+    } catch (error) {
+        console.error("Error fetching all batch print data:", error);
+        return res
+            .status(500)
+            .json({ message: "Failed to fetch all batch print data" });
     }
 };
