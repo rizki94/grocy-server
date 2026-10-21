@@ -34,7 +34,7 @@ export const parseTableQuery = (query: TableQueryParams): ParsedTableParams => {
     const search = (query.search ?? "").trim();
     const select = query.select ?? "";
     const sort = query.sort ?? "";
-    const order = query.order?.toLowerCase() === "desc" ? "desc" : "asc";
+    const order = query.order?.toLowerCase() === "asc" ? "asc" : "desc";
 
     const groupBy = query.groupBy ?? undefined;
     const filters = query.filters ?? {};

@@ -185,10 +185,11 @@ export const getPaginatedJournals = async (req: Request, res: Response) => {
         const sortColumns: Record<string, any> = {
             description: journals.description,
             date: journals.date,
+            createdAt: journals.createdAt,
         };
 
-        const sortKey = sortColumns[sort as string] ?? journals.description;
-        const sortOrder = order === "desc" ? desc(sortKey) : asc(sortKey);
+        const sortKey = sortColumns[sort as string] ?? journals.createdAt;
+        const sortOrder = order === "asc" ? asc(sortKey) : desc(sortKey);
 
         const scope = branchScope(journals.branchId, req);
 
@@ -215,8 +216,8 @@ export const getPaginatedJournals = async (req: Request, res: Response) => {
             rowCount: total,
             pageIndex: page,
             pageSize: limit,
-            sort: sort || "description",
-            order: order || "asc",
+            sort: sort || "createdAt",
+            order: order || "desc",
         });
     } catch (error) {
         console.error("Error fetching journals:", error);

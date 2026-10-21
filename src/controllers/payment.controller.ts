@@ -95,12 +95,14 @@ export const getPaginatedPayments = async (req: Request, res: Response) => {
 
         const sortColumns: Record<string, PgColumn> = {
             supplier: contacts.name,
+            date: payments.date,
+            createdAt: payments.createdAt,
         };
 
-        const sortKey = (query.sort as string) ?? "date";
-        const order = (query.order as string) === "desc" ? "desc" : "asc";
+        const sortKey = (query.sort as string) ?? "createdAt";
+        const order = (query.order as string) === "asc" ? "asc" : "desc";
 
-        const sortColumn = sortColumns[sortKey] ?? payments.date;
+        const sortColumn = sortColumns[sortKey] ?? payments.createdAt;
 
         const scope = branchScope(payments.branchId, req);
 

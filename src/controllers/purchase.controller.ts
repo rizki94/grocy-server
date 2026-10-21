@@ -440,9 +440,11 @@ export const getPaginatedPurchases = async (req: Request, res: Response) => {
 
         const sortColumns: Record<string, PgColumn> = {
             invoice: transactions.invoice,
+            date: transactions.date,
+            createdAt: transactions.createdAt,
         };
 
-        const sortColumn = sortColumns[sort] ?? transactions.invoice;
+        const sortColumn = sortColumns[sort] ?? transactions.createdAt;
 
         const scope = branchScope(transactions.branchId, req);
 
