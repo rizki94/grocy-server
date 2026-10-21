@@ -16,6 +16,7 @@ import {
 } from "@/db/schemas";
 import { eq, inArray, and, gte, lte, sql, notInArray, desc, like, or } from "drizzle-orm";
 import { parseTableQuery } from "@/services/table-query";
+import { branchScope, withBranch } from "@/helpers/branch.helper";
 
 export const getUnassignedInvoices = async (req: Request, res: Response) => {
     try {
@@ -31,10 +32,15 @@ export const getUnassignedInvoices = async (req: Request, res: Response) => {
         const assignedTransactionIds = assignedItems.map((i) => i.transactionId);
 
         // 2. Build conditions for posted transactions
+        const branchCondition = branchScope(transactions.branchId, req);
         const conditions: any[] = [
             eq(transactions.type, "sales"),
             eq(transactions.status, "posted"),
         ];
+
+        if (branchCondition) {
+            conditions.push(branchCondition);
+        }
 
         if (assignedTransactionIds.length > 0) {
             conditions.push(notInArray(transactions.id, assignedTransactionIds));
@@ -310,6 +316,9 @@ export const getPaginatedDispatches = async (req: Request, res: Response) => {
                 lte(deliveries.deliveryDate, toStr),
             );
         }
+
+        const branchCond = branchScope(deliveries.branchId, req);
+        if (branchCond) conditions.push(branchCond);
 
         const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 

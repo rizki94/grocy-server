@@ -18,13 +18,15 @@ import { Request, Response } from "express";
 import { parseTableQuery } from "@/services/table-query";
 import { PgColumn } from "drizzle-orm/pg-core";
 import { findGlAccountByCode } from "@/repositories/gl-account.repository";
+import { branchScope, withBranch, resolveBranchId, resolveBranchCode } from "@/helpers/branch.helper";
 
 export async function getAllAdjustments(req: Request, res: Response) {
     try {
+        const scope = branchScope(transactions.branchId, req);
         const data = await db
             .select()
             .from(transactions)
-            .where(eq(transactions.type, "adjustment"))
+            .where(and(eq(transactions.type, "adjustment"), scope))
             .orderBy(desc(transactions.date));
         res.status(200).json(data);
     } catch (error) {
@@ -60,18 +62,21 @@ export const createAdjustment = async (req: Request, res: Response) => {
 
     const adjustment = parsed.data;
     console.log("[createAdjustment] Data:", JSON.stringify(adjustment, null, 2));
-    const invoice = await generateInvoice("adjustment");
+    const branchCode = await resolveBranchCode(req);
+    const invoice = await generateInvoice("adjustment", branchCode);
 
     try {
         const [created] = await db
             .insert(transactions)
-            .values({
-                ...adjustment,
-                invoice,
-                type: "adjustment",
-                status: "draft",
-                userId: req.user!.id,
-            })
+            .values(
+                withBranch({
+                    ...adjustment,
+                    invoice,
+                    type: "adjustment",
+                    status: "draft",
+                    userId: req.user!.id,
+                }, req)
+            )
             .returning();
 
         for (const detail of adjustment.details) {
@@ -276,10 +281,12 @@ export const postAdjustment = async (req: Request, res: Response) => {
             );
 
             // Create Journal
+            const adjustmentBranchId = await resolveBranchId(adjustment.branchId, req);
             const [journal] = await tx
                 .insert(journals)
                 .values({
                     transactionId: adjustment.id,
+                    branchId: adjustmentBranchId,
                     date: adjustment.date,
                     description: `Penyesuaian Stok ${adjustment.invoice}`,
                     status: "posted",
@@ -388,6 +395,8 @@ export const getPaginatedAdjustments = async (req: Request, res: Response) => {
         };
         const sortColumn = sortColumns[sort] ?? transactions.date;
 
+        const scope = branchScope(transactions.branchId, req);
+
         const [list, [totalCount]] = await Promise.all([
             db
                 .select()
@@ -395,6 +404,7 @@ export const getPaginatedAdjustments = async (req: Request, res: Response) => {
                 .where(
                     and(
                         eq(transactions.type, "adjustment"),
+                        scope,
                         searchCondition,
                         dateCondition,
                         statusCondition,
@@ -409,6 +419,7 @@ export const getPaginatedAdjustments = async (req: Request, res: Response) => {
                 .where(
                     and(
                         eq(transactions.type, "adjustment"),
+                        scope,
                         searchCondition,
                         dateCondition,
                         statusCondition,
@@ -452,11 +463,14 @@ export const cancelAdjustment = async (req: Request, res: Response) => {
                 .where(eq(transactionDetails.transactionId, id));
 
             // 3. Create Reversal Transaction
-            const reversalInvoice = await generateInvoice("adjustment");
+            const branchCode = await resolveBranchCode(req);
+            const reversalInvoice = await generateInvoice("adjustment", branchCode);
+            const reversalBranchId = await resolveBranchId(original.branchId, req);
             const [reversal] = await tx
                 .insert(transactions)
                 .values({
                     userId: req.user!.id,
+                    branchId: reversalBranchId,
                     type: "adjustment",
                     invoice: reversalInvoice,
                     reference: `Void of ${original.invoice}`,
@@ -480,6 +494,7 @@ export const cancelAdjustment = async (req: Request, res: Response) => {
                     transactionId: reversal.id,
                     productId: detail.productId,
                     productDetailId: detail.productDetailId,
+                    warehouseId: detail.warehouseId,
                     baseRatio: detail.baseRatio,
                     qty: detail.qty,
                     price: detail.price,
@@ -524,6 +539,7 @@ export const cancelAdjustment = async (req: Request, res: Response) => {
                 .insert(journals)
                 .values({
                     transactionId: reversal.id,
+                    branchId: reversalBranchId,
                     date: reversal.date,
                     description: `Void Adjustment #${original.invoice}`,
                     status: "posted",

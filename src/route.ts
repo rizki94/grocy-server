@@ -42,6 +42,8 @@ import { dispatchRouter } from "./routes/dispatch.route";
 import marketplaceRouter from "./routes/marketplace.route";
 import bridgeImportRouter from "./routes/bridge-import.route";
 import pickingListRouter from "./routes/picking-list.route";
+import { branchRoute } from "./routes/branch.route";
+import expenseRouter from "./routes/expense.route";
 
 import { refresh } from "./controllers/auth.controller";
 
@@ -97,5 +99,7 @@ route.use("/purchase-return", purchaseReturnRouter);
 route.use("/return-reasons", returnReasonRouter);
 route.use("/settings", settingRouter);
 route.use("/picking-list", pickingListRouter);
+route.use("/branches", branchRoute);
+route.use("/expenses", expenseRouter);
 
 

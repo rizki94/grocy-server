@@ -5,7 +5,7 @@ import bcrypt from "bcrypt";
 import { logAction } from "@/utils/log-helper";
 import { CacheService } from "@/services/cache-service";
 import { PgColumn } from "drizzle-orm/pg-core";
-import { roles, users } from "@/db/schemas";
+import { roles, users, branches } from "@/db/schemas";
 import {
     userInsertSchema,
     userUpdateSchema,
@@ -33,6 +33,7 @@ export const getUserById = async (req: Request, res: Response) => {
                 displayName: users.displayName,
                 avatar: users.avatar,
                 roleId: users.roleId,
+                branchId: users.branchId,
                 isActive: users.isActive,
             })
             .from(users)
@@ -208,12 +209,17 @@ export const getPaginatedUsers = async (req: Request, res: Response) => {
                     displayName: users.displayName,
                     avatar: users.avatar,
                     role: roles.name,
+                    roleId: users.roleId,
+                    branchId: users.branchId,
+                    branchName: branches.name,
+                    branchCode: branches.code,
                     isActive: users.isActive,
                     cashGlAccountId: users.cashGlAccountId,
                     posWarehouseId: users.posWarehouseId,
                 })
                 .from(users)
                 .innerJoin(roles, eq(roles.id, users.roleId))
+                .leftJoin(branches, eq(branches.id, users.branchId))
                 .where(searchCondition)
                 .orderBy(order === "desc" ? desc(sortColumn) : asc(sortColumn))
                 .limit(pageSize)

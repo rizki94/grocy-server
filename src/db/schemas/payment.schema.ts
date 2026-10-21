@@ -3,11 +3,13 @@ import { transactions } from "./transaction.schema";
 import { decimalAsNumber } from "@/types/decimal-as-number";
 import { contacts } from "./contact.schema";
 import { glAccounts } from "./gl-account.schema";
+import { branches } from "./branch.schema";
 
 export const openInvoices = pgTable("open_invoices", {
     id: uuid("id").defaultRandom().primaryKey(),
     transactionId: uuid("transaction_id").references(() => transactions.id),
     contactId: uuid("contact_id").references(() => contacts.id),
+    branchId: uuid("branch_id").references(() => branches.id),
     type: text("type", { enum: ["receivable", "payable"] }).notNull(),
     dueDate: date("due_date").notNull(),
     amount: decimalAsNumber(12, 2)("amount").notNull().default(0),
@@ -25,6 +27,7 @@ export const openInvoices = pgTable("open_invoices", {
 export const payments = pgTable("payments", {
     id: uuid("id").defaultRandom().primaryKey(),
     contactId: uuid("contact_id").references(() => contacts.id),
+    branchId: uuid("branch_id").references(() => branches.id),
     date: date("date").notNull(),
     type: text("type", { enum: ["receivable", "payable"] }).notNull(),
     totalAmount: decimalAsNumber(12, 2)("total_amount").notNull().default(0),

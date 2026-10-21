@@ -12,6 +12,7 @@ import {
 } from "@/db/schemas";
 import { PaymentWithLinesInsert } from "@/validators/payment.validator";
 import { eq, sql, and } from "drizzle-orm";
+import { resolveBranchId } from "@/helpers/branch.helper";
 
 export async function findPaymentById(id: string) {
     const [payment] = await db
@@ -67,12 +68,15 @@ export async function findPaymentById(id: string) {
 export async function createPayment(
     data: PaymentWithLinesInsert,
     user: Express.User,
+    branchId?: string | null,
 ) {
+    const effectiveBranchId = await resolveBranchId(branchId);
     return await db.transaction(async (tx) => {
         const [payment] = await tx
             .insert(payments)
             .values({
                 contactId: data.contactId,
+                branchId: effectiveBranchId,
                 date: data.date,
                 totalAmount: data.totalAmount,
                 type: data.type,
@@ -183,12 +187,26 @@ export async function postPayment(id: string) {
             const paidCents = Math.round(newPaidAmount * 100);
             const totalCents = Math.round(total * 100);
 
-            if (paidCents > totalCents) {
-                newStatus = "overpaid";
-            } else if (paidCents >= totalCents) {
-                newStatus = "paid";
+            if (totalCents < 0) {
+                if (paidCents < totalCents) {
+                    newStatus = "overpaid";
+                } else if (paidCents <= totalCents) {
+                    newStatus = "paid";
+                } else if (paidCents < 0) {
+                    newStatus = "partial";
+                } else {
+                    newStatus = "open";
+                }
             } else {
-                newStatus = "partial";
+                if (paidCents > totalCents) {
+                    newStatus = "overpaid";
+                } else if (paidCents >= totalCents) {
+                    newStatus = "paid";
+                } else if (paidCents > 0) {
+                    newStatus = "partial";
+                } else {
+                    newStatus = "open";
+                }
             }
 
             await tx
@@ -201,8 +219,11 @@ export async function postPayment(id: string) {
                 .where(eq(openInvoices.id, line.openInvoiceId));
 
             if (openItem.transactionId) {
-                // Map overpaid → paid on the transaction level (the invoice itself is settled)
-                const txStatus = newStatus === "overpaid" ? "paid" : newStatus;
+                // Map overpaid/paid -> paid, partial -> partial, open -> posted
+                let txStatus: "draft" | "order" | "posted" | "partial" | "paid" | "cancelled" = "posted";
+                if (newStatus === "overpaid" || newStatus === "paid") txStatus = "paid";
+                else if (newStatus === "partial") txStatus = "partial";
+
                 await tx
                     .update(transactions)
                     .set({
@@ -249,6 +270,7 @@ export async function postPayment(id: string) {
         const concatenatedInvoices = invoiceList.map((i) => i.invoice).join(", ");
         const paymentTypeName = payment.type === "payable" ? "Keluar" : "Masuk";
 
+        const effectiveBranchId = await resolveBranchId(payment.branchId);
         const [journal] = await tx
             .insert(journals)
             .values({
@@ -256,6 +278,7 @@ export async function postPayment(id: string) {
                 description: payment.note || `Pembayaran ${paymentTypeName} ${concatenatedInvoices}${payment.reference ? ` (${payment.reference})` : ""}`,
                 status: "posted",
                 transactionId: null,
+                branchId: effectiveBranchId,
             })
             .returning();
 
@@ -267,6 +290,7 @@ export async function postPayment(id: string) {
 
         for (const acc of paymentAccs) {
             const amt = Number(acc.amount);
+            if (Math.abs(amt) <= 0.001) continue;
             let debit = 0;
             let credit = 0;
             if (payment.type === "receivable") {
@@ -288,23 +312,25 @@ export async function postPayment(id: string) {
 
         // 2. AP/AR Side (Balancing)
         const totalAmt = Number(payment.totalAmount);
-        let arApDebit = 0;
-        let arApCredit = 0;
-        if (payment.type === "receivable") {
-            if (totalAmt >= 0) arApCredit = totalAmt;
-            else arApDebit = Math.abs(totalAmt);
-        } else {
-            if (totalAmt >= 0) arApDebit = totalAmt;
-            else arApCredit = Math.abs(totalAmt);
-        }
+        if (Math.abs(totalAmt) > 0.001) {
+            let arApDebit = 0;
+            let arApCredit = 0;
+            if (payment.type === "receivable") {
+                if (totalAmt >= 0) arApCredit = totalAmt;
+                else arApDebit = Math.abs(totalAmt);
+            } else {
+                if (totalAmt >= 0) arApDebit = totalAmt;
+                else arApCredit = Math.abs(totalAmt);
+            }
 
-        await tx.insert(journalEntries).values({
-            journalId: journal.id,
-            glAccountId: apArMapping.glAccountId,
-            debit: arApDebit,
-            credit: arApCredit,
-            note: `Pelunasan ${payment.type === "payable" ? "Hutang" : "Piutang"} ${concatenatedInvoices}`,
-        });
+            await tx.insert(journalEntries).values({
+                journalId: journal.id,
+                glAccountId: apArMapping.glAccountId,
+                debit: arApDebit,
+                credit: arApCredit,
+                note: `Pelunasan ${payment.type === "payable" ? "Hutang" : "Piutang"} ${concatenatedInvoices}`,
+            });
+        }
 
         await tx
             .update(payments)
@@ -345,18 +371,31 @@ export async function voidPayment(id: string) {
             const newPaidAmount =
                 Number(openItem.paidAmount || 0) - Number(line.amount);
 
-            const safePaidAmount = newPaidAmount < 0 ? 0 : newPaidAmount;
             const totalAmount = Number(openItem.amount);
+            const isNegative = totalAmount < 0;
+            const safePaidAmount = isNegative
+                ? (newPaidAmount > 0 ? 0 : newPaidAmount)
+                : (newPaidAmount < 0 ? 0 : newPaidAmount);
             const paidCents = Math.round(safePaidAmount * 100);
             const totalCents = Math.round(totalAmount * 100);
 
             let newStatus: "open" | "partial" | "paid" | "overpaid" = "open";
-            if (paidCents > totalCents) {
-                newStatus = "overpaid"; // still overpaid after reversal (edge case)
-            } else if (paidCents >= totalCents) {
-                newStatus = "paid";
-            } else if (paidCents > 0) {
-                newStatus = "partial";
+            if (totalCents < 0) {
+                if (paidCents < totalCents) {
+                    newStatus = "overpaid";
+                } else if (paidCents <= totalCents) {
+                    newStatus = "paid";
+                } else if (paidCents < 0) {
+                    newStatus = "partial";
+                }
+            } else {
+                if (paidCents > totalCents) {
+                    newStatus = "overpaid";
+                } else if (paidCents >= totalCents) {
+                    newStatus = "paid";
+                } else if (paidCents > 0) {
+                    newStatus = "partial";
+                }
             }
 
             await tx
@@ -406,6 +445,7 @@ export async function voidPayment(id: string) {
             );
         }
 
+        const effectiveBranchId = await resolveBranchId(payment.branchId);
         const [journal] = await tx
             .insert(journals)
             .values({
@@ -413,6 +453,7 @@ export async function voidPayment(id: string) {
                 description: `Void Payment ${payment.type === "payable" ? "Out" : "In"} #${id}`,
                 status: "posted",
                 transactionId: null,
+                branchId: effectiveBranchId,
             })
             .returning();
 

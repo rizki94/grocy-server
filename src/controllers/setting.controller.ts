@@ -18,13 +18,42 @@ export const getSettings = async (req: Request, res: Response) => {
 
 export const updateSettings = async (req: Request, res: Response) => {
     try {
-        const { posRound2Digit, allowNegativeStock, enableInventoryTracking, roundingDifferenceGlAccountId } = req.body;
+        const {
+            posRound2Digit,
+            allowNegativeStock,
+            enableInventoryTracking,
+            roundingDifferenceGlAccountId,
+            minDateOffset,
+            maxDateOffset,
+            lockSalesPrice,
+            enableTax,
+            purchasePrefix,
+            salesPrefix,
+            salesReturnPrefix,
+            purchaseReturnPrefix,
+            transferStockPrefix,
+            adjustmentPrefix,
+            posSalesPrefix,
+            expensePrefix,
+        } = req.body;
 
         await db.update(settings).set({
             posRound2Digit,
             allowNegativeStock,
             enableInventoryTracking: enableInventoryTracking ?? true,
             roundingDifferenceGlAccountId,
+            ...(minDateOffset !== undefined ? { minDateOffset: Number(minDateOffset) } : {}),
+            ...(maxDateOffset !== undefined ? { maxDateOffset: Number(maxDateOffset) } : {}),
+            ...(lockSalesPrice !== undefined ? { lockSalesPrice } : {}),
+            ...(enableTax !== undefined ? { enableTax } : {}),
+            ...(purchasePrefix ? { purchasePrefix: purchasePrefix.trim().toUpperCase() } : {}),
+            ...(salesPrefix ? { salesPrefix: salesPrefix.trim().toUpperCase() } : {}),
+            ...(salesReturnPrefix ? { salesReturnPrefix: salesReturnPrefix.trim().toUpperCase() } : {}),
+            ...(purchaseReturnPrefix ? { purchaseReturnPrefix: purchaseReturnPrefix.trim().toUpperCase() } : {}),
+            ...(transferStockPrefix ? { transferStockPrefix: transferStockPrefix.trim().toUpperCase() } : {}),
+            ...(adjustmentPrefix ? { adjustmentPrefix: adjustmentPrefix.trim().toUpperCase() } : {}),
+            ...(posSalesPrefix ? { posSalesPrefix: posSalesPrefix.trim().toUpperCase() } : {}),
+            ...(expensePrefix ? { expensePrefix: expensePrefix.trim().toUpperCase() } : {}),
             updatedAt: new Date(),
         }).where(eq(settings.id, "global"));
 
@@ -34,3 +63,4 @@ export const updateSettings = async (req: Request, res: Response) => {
         res.status(500).json({ message: "Server Error" });
     }
 };
+

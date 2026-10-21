@@ -34,20 +34,16 @@ import { PgColumn } from "drizzle-orm/pg-core";
 import { Request, Response } from "express";
 import { findGlAccountByCode } from "@/repositories/gl-account.repository";
 import { parseTableQuery } from "@/services/table-query";
+import { branchScope, withBranch, resolveBranchId, resolveBranchCode } from "@/helpers/branch.helper";
 
 export async function getAllSalesReturns(req: Request, res: Response) {
     try {
-        const data = await CacheService.getOrSet(
-            "sales_returns:all",
-            60,
-            async () => {
-                return db
-                    .select()
-                    .from(transactions)
-                    .where(and(eq(transactions.type, "sales_return")))
-                    .orderBy(transactions.invoice);
-            },
-        );
+        const scope = branchScope(transactions.branchId, req);
+        const data = await db
+            .select()
+            .from(transactions)
+            .where(and(eq(transactions.type, "sales_return"), scope))
+            .orderBy(transactions.invoice);
         res.status(200).json(data);
     } catch (error) {
         console.error("Error fetching sales:", error);
@@ -99,18 +95,21 @@ export const createSalesReturn = async (req: Request, res: Response) => {
     }
 
     const { details, ...salesData } = parsed.data;
-    const invoice = await generateInvoice("sales_return");
+    const branchCode = await resolveBranchCode(req);
+    const invoice = await generateInvoice("sales_return", branchCode);
 
     try {
         const [createdSales] = await db
             .insert(transactions)
-            .values({
-                ...salesData,
-                invoice,
-                type: "sales_return",
-                status: "order",
-                userId: req.user!.id,
-            })
+            .values(
+                withBranch({
+                    ...salesData,
+                    invoice,
+                    type: "sales_return",
+                    status: "order",
+                    userId: req.user!.id,
+                }, req)
+            )
             .returning();
 
         for (const detail of details) {
@@ -317,10 +316,12 @@ export const postSalesReturn = async (req: Request, res: Response) => {
             const netRevenue = calcSubtotal - calcDiscount;
             const calcAmount = Number(sales.totalAmount || (netRevenue + calcTax));
 
+            const journalBranchId = await resolveBranchId(sales.branchId, req);
             const [journal] = await tx
                 .insert(journals)
                 .values({
                     transactionId: sales.id,
+                    branchId: journalBranchId,
                     date: sales.date,
                     description: `Retur Penjualan ${sales.invoice}`,
                     status: "posted",
@@ -403,6 +404,7 @@ export const postSalesReturn = async (req: Request, res: Response) => {
             await tx.insert(openInvoices).values({
                 transactionId: sales.id,
                 contactId: sales.contactId,
+                branchId: journalBranchId,
                 type: "receivable",
                 dueDate: addDays(sales.date, sales.termOfPayment),
                 amount: -calcAmount,
@@ -482,12 +484,14 @@ export const getPaginatedSalesReturns = async (req: Request, res: Response) => {
 
         const sortColumn = sortColumns[sort] ?? transactions.invoice;
 
+        const scope = branchScope(transactions.branchId, req);
+
         const [salesList, [totalCount]] = await Promise.all([
             db
                 .select({
                     id: transactions.id,
                     invoice: transactions.invoice,
-                    customer: contacts.name, // Changed from supplier to customer
+                    customer: contacts.name,
                     status: transactions.status,
                     totalAmount: transactions.totalAmount,
                     date: transactions.date,
@@ -497,7 +501,8 @@ export const getPaginatedSalesReturns = async (req: Request, res: Response) => {
                 .innerJoin(contacts, eq(contacts.id, transactions.contactId))
                 .where(
                     and(
-                        eq(transactions.type, "sales_return"), // Filter by type
+                        eq(transactions.type, "sales_return"),
+                        scope,
                         searchCondition,
                         filterCondition,
                         dateCondition,
@@ -512,7 +517,8 @@ export const getPaginatedSalesReturns = async (req: Request, res: Response) => {
                 .innerJoin(contacts, eq(contacts.id, transactions.contactId))
                 .where(
                     and(
-                        eq(transactions.type, "sales_return"), // Filter by type
+                        eq(transactions.type, "sales_return"),
+                        scope,
                         searchCondition,
                         filterCondition,
                         dateCondition,
@@ -557,11 +563,13 @@ export const cancelSalesReturn = async (req: Request, res: Response) => {
             }
 
             // 2. Create Reversal Transaction
+            const reversalBranchId = await resolveBranchId(original.branchId, req);
             const [reversal] = await tx
                 .insert(transactions)
                 .values({
                     invoice: `${original.invoice}-VOID`,
                     type: "sales_return",
+                    branchId: reversalBranchId,
                     reference: `Void of ${original.invoice}`,
                     contactId: original.contactId,
                     termOfPayment: original.termOfPayment,
@@ -582,6 +590,7 @@ export const cancelSalesReturn = async (req: Request, res: Response) => {
                 transactionId: reversal.id,
                 productId: detail.productId,
                 productDetailId: detail.productDetailId,
+                warehouseId: detail.warehouseId,
                 baseRatio: detail.baseRatio,
                 qty: -Number(detail.qty),
                 price: detail.price,
@@ -611,10 +620,12 @@ export const cancelSalesReturn = async (req: Request, res: Response) => {
                 );
 
                 // 5. Create Reversal Journal
+                const reversalBranchId = await resolveBranchId(reversal.branchId || original.branchId, req);
                 const [journal] = await tx
                     .insert(journals)
                     .values({
                         transactionId: reversal.id,
+                        branchId: reversalBranchId,
                         date: reversal.date,
                         description: `Void Sales Return #${original.invoice}`,
                         status: "posted",
@@ -647,6 +658,7 @@ export const cancelSalesReturn = async (req: Request, res: Response) => {
                 await tx.insert(openInvoices).values({
                     transactionId: reversal.id,
                     contactId: original.contactId,
+                    branchId: reversalBranchId,
                     type: "receivable",
                     dueDate: addDays(original.date, original.termOfPayment),
                     amount: Number(original.totalAmount), // Positive to offset original negative

@@ -15,13 +15,15 @@ import { and, desc, eq, gte, lte, or, sql, like } from "drizzle-orm";
 import { Request, Response } from "express";
 import { parseTableQuery } from "@/services/table-query";
 import { PgColumn } from "drizzle-orm/pg-core";
+import { branchScope, withBranch, resolveBranchCode } from "@/helpers/branch.helper";
 
 export async function getAllTransfers(req: Request, res: Response) {
     try {
+        const scope = branchScope(transactions.branchId, req);
         const data = await db
             .select()
             .from(transactions)
-            .where(eq(transactions.type, "transfer_stock"))
+            .where(and(eq(transactions.type, "transfer_stock"), scope))
             .orderBy(desc(transactions.date));
         res.status(200).json(data);
     } catch (error) {
@@ -68,18 +70,21 @@ export const createTransfer = async (req: Request, res: Response) => {
     }
 
     const transfer = parsed.data;
-    const invoice = await generateInvoice("transfer_stock");
+    const branchCode = await resolveBranchCode(req);
+    const invoice = await generateInvoice("transfer_stock", branchCode);
 
     try {
         const [created] = await db
             .insert(transactions)
-            .values({
-                ...transfer,
-                invoice,
-                type: "transfer_stock",
-                status: "draft",
-                userId: req.user!.id,
-            })
+            .values(
+                withBranch({
+                    ...transfer,
+                    invoice,
+                    type: "transfer_stock",
+                    status: "draft",
+                    userId: req.user!.id,
+                }, req)
+            )
             .returning();
 
         for (const detail of transfer.details) {
@@ -365,6 +370,8 @@ export const getPaginatedTransfers = async (req: Request, res: Response) => {
         };
         const sortColumn = sortColumns[sort] ?? transactions.date;
 
+        const scope = branchScope(transactions.branchId, req);
+
         const [list, [totalCount]] = await Promise.all([
             db
                 .select()
@@ -372,6 +379,7 @@ export const getPaginatedTransfers = async (req: Request, res: Response) => {
                 .where(
                     and(
                         eq(transactions.type, "transfer_stock"),
+                        scope,
                         searchCondition,
                         dateCondition,
                         statusCondition,
@@ -386,6 +394,7 @@ export const getPaginatedTransfers = async (req: Request, res: Response) => {
                 .where(
                     and(
                         eq(transactions.type, "transfer_stock"),
+                        scope,
                         searchCondition,
                         dateCondition,
                         statusCondition,

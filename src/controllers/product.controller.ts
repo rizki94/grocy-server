@@ -9,7 +9,10 @@ import {
     stockLayers,
     stocks,
     taxes,
+    productBranches,
+    warehouses,
 } from "@/db/schemas";
+import { branchScope, productBranchFilter } from "@/helpers/branch.helper";
 import { logAction } from "@/utils/log-helper";
 import { CacheService } from "@/services/cache-service";
 import {
@@ -73,7 +76,8 @@ export async function getActiveProducts(req: Request, res: Response) {
             .where(
                 and(
                     eq(products.isActive, true),
-                    isSellableOnly ? eq(productDetails.isSellable, true) : undefined
+                    isSellableOnly ? eq(productDetails.isSellable, true) : undefined,
+                    productBranchFilter(products, req),
                 )
             )
             .orderBy(products.name);
@@ -152,11 +156,19 @@ export const getProductById = async (req: Request, res: Response) => {
             .from(productImages)
             .where(eq(productImages.productId, id));
 
+        const branchCondition = branchScope(warehouses.branchId, req);
+
         // Total base qty = sum across all stock records (warehouses/batches)
         const qtyResult = await db
             .select({ totalQty: sql<number>`COALESCE(SUM(${stocks.qty}), 0)` })
             .from(stocks)
-            .where(eq(stocks.productId, id))
+            .leftJoin(warehouses, eq(warehouses.id, stocks.warehouseId))
+            .where(
+                and(
+                    eq(stocks.productId, id),
+                    branchCondition,
+                ),
+            )
             .then((r) => r[0]);
 
         // FIFO avg cost = weighted average from stock layers
@@ -169,11 +181,24 @@ export const getProductById = async (req: Request, res: Response) => {
             })
             .from(stockLayers)
             .innerJoin(stocks, eq(stockLayers.stockId, stocks.id))
-            .where(eq(stocks.productId, id))
+            .leftJoin(warehouses, eq(warehouses.id, stocks.warehouseId))
+            .where(
+                and(
+                    eq(stocks.productId, id),
+                    branchCondition,
+                ),
+            )
             .then((r) => r[0]);
+
+        const assignedBranches = await db
+            .select({ branchId: productBranches.branchId })
+            .from(productBranches)
+            .where(eq(productBranches.productId, id));
 
         const result = {
             ...product,
+            isGlobal: product.isGlobal ?? true,
+            branchIds: assignedBranches.map((b) => b.branchId),
             details: detailsWithPrices,
             attributes,
             images,
@@ -262,12 +287,22 @@ export const createProduct = async (req: Request, res: Response) => {
                 description: product.description,
                 isActive: product.isActive,
                 taxId: product.taxId,
+                isGlobal: product.isGlobal ?? true,
                 useBatch: product.useBatch,
                 useExpiry: product.useExpiry,
                 useSerialNumber: product.useSerialNumber,
                 reorderLevel: product.reorderLevel,
             })
             .returning();
+
+        if (!product.isGlobal && product.branchIds?.length) {
+            await db.insert(productBranches).values(
+                product.branchIds.map((bId) => ({
+                    productId: createdProduct.id,
+                    branchId: bId,
+                }))
+            );
+        }
 
         for (const d of product.details ?? []) {
             const [createdDetail] = await db
@@ -354,6 +389,22 @@ export const updateProduct = async (req: Request, res: Response) => {
     const product = parsed.data;
 
     try {
+        const [existing] = await db
+            .select()
+            .from(products)
+            .where(eq(products.id, product.id))
+            .limit(1);
+
+        if (!existing) {
+            return res.status(404).json({ message: "Product not found" });
+        }
+
+        if (existing.isGlobal && !req.isHq) {
+            return res.status(403).json({
+                message: "Global products can only be edited by HQ Branch users",
+            });
+        }
+
         // Update main product
         const [updated] = await db
             .update(products)
@@ -362,6 +413,7 @@ export const updateProduct = async (req: Request, res: Response) => {
                 description: product.description,
                 isActive: product.isActive,
                 taxId: product.taxId,
+                isGlobal: product.isGlobal ?? true,
                 useBatch: product.useBatch,
                 useExpiry: product.useExpiry,
                 useSerialNumber: product.useSerialNumber,
@@ -370,8 +422,15 @@ export const updateProduct = async (req: Request, res: Response) => {
             .where(eq(products.id, product.id))
             .returning();
 
-        if (!updated) {
-            return res.status(404).json({ message: "Product not found" });
+        // Sync branch assignments
+        await db.delete(productBranches).where(eq(productBranches.productId, product.id));
+        if (!product.isGlobal && product.branchIds?.length) {
+            await db.insert(productBranches).values(
+                product.branchIds.map((bId) => ({
+                    productId: product.id,
+                    branchId: bId,
+                }))
+            );
         }
 
         // ----- PRODUCT DETAILS -----
@@ -616,6 +675,9 @@ export const getPaginatedProducts = async (req: Request, res: Response) => {
 
         const sortColumn = sortColumns[sortKey] ?? products.name;
 
+        const branchCondition = productBranchFilter(products, req);
+        const finalCondition = and(searchCondition, branchCondition);
+
         const [productList, [totalCount]] = await Promise.all([
             db
                 .select({
@@ -623,6 +685,7 @@ export const getPaginatedProducts = async (req: Request, res: Response) => {
                     name: products.name,
                     description: products.description,
                     isActive: products.isActive,
+                    isGlobal: products.isGlobal,
                     taxId: products.taxId,
                     taxName: taxes.name,
                     taxRate: taxes.rate,
@@ -647,14 +710,14 @@ export const getPaginatedProducts = async (req: Request, res: Response) => {
                 })
                 .from(products)
                 .leftJoin(taxes, eq(taxes.id, products.taxId))
-                .where(searchCondition)
+                .where(finalCondition)
                 .orderBy(order === "desc" ? desc(sortColumn) : asc(sortColumn))
                 .limit(pageSize)
                 .offset(offset),
             db
                 .select({ count: sql<number>`count(*)` })
                 .from(products)
-                .where(searchCondition),
+                .where(finalCondition),
         ]);
 
         res.json({

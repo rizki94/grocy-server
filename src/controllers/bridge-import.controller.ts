@@ -13,6 +13,7 @@ import {
     warehouses,
 } from "@/db/schemas";
 import { generateInvoice } from "@/helpers/generate-invoice";
+import { resolveBranchCode, resolveBranchId } from "@/helpers/branch.helper";
 import { and, eq, ilike, inArray, isNull, or, sql } from "drizzle-orm";
 import { Request, Response } from "express";
 
@@ -374,6 +375,8 @@ export const submitBridgeImport = async (req: Request, res: Response) => {
             itemsByInvoice.get(inv)!.push(item);
         }
 
+        const branchId = await resolveBranchId(undefined, req);
+        const branchCode = await resolveBranchCode(req);
         const createdTransactions: any[] = [];
 
         await db.transaction(async (tx) => {
@@ -396,7 +399,7 @@ export const submitBridgeImport = async (req: Request, res: Response) => {
                     continue; // Skip already imported invoice
                 }
 
-                const generatedInvoice = await generateInvoice("sales");
+                const generatedInvoice = await generateInvoice("sales", branchCode);
 
                 const subtotal = orderItems.reduce(
                     (acc, item) => acc + (Number(item.qty) * Number(item.price)),
@@ -407,6 +410,7 @@ export const submitBridgeImport = async (req: Request, res: Response) => {
                 const [newTrx] = await tx
                     .insert(transactions)
                     .values({
+                        branchId,
                         type: "sales",
                         invoice: generatedInvoice,
                         contactId: resolvedContactId,

@@ -15,6 +15,7 @@ import {
     warehouses,
 } from "@/db/schemas";
 import { and, eq, sql, gte, lte, desc, inArray, asc } from "drizzle-orm";
+import { branchScope } from "@/helpers/branch.helper";
 
 export const getProfitLoss = async (req: Request, res: Response) => {
     try {
@@ -27,6 +28,8 @@ export const getProfitLoss = async (req: Request, res: Response) => {
         const toDate = to
             ? (to as string).split("T")[0]
             : new Date().toISOString().split("T")[0];
+
+        const scope = branchScope(journals.branchId, req);
 
         const report = await db
             .select({
@@ -49,6 +52,7 @@ export const getProfitLoss = async (req: Request, res: Response) => {
                     gte(journals.date, fromDate),
                     lte(journals.date, toDate),
                     inArray(glAccounts.type, ["income", "expense"]),
+                    scope,
                 ),
             )
             .groupBy(glAccounts.id, glAccounts.code, glAccounts.name, glAccounts.type)
@@ -75,6 +79,7 @@ export const getProfitLoss = async (req: Request, res: Response) => {
         res.json({
             fromDate,
             toDate,
+            branchId: req.activeBranchId || (req.user as any)?.branchId || null,
             income,
             expense,
             totalIncome,
@@ -98,6 +103,8 @@ export const getBalanceSheet = async (req: Request, res: Response) => {
                 "T",
             )[0] || new Date().toISOString().split("T")[0];
 
+        const scope = branchScope(journals.branchId, req);
+
         const report = await db
             .select({
                 accountId: glAccounts.id,
@@ -118,6 +125,7 @@ export const getBalanceSheet = async (req: Request, res: Response) => {
                     eq(journals.status, "posted"),
                     lte(journals.date, toDate),
                     inArray(glAccounts.type, ["asset", "liability", "equity"]),
+                    scope,
                 ),
             )
             .groupBy(glAccounts.id, glAccounts.code, glAccounts.name, glAccounts.type)
@@ -162,6 +170,7 @@ export const getBalanceSheet = async (req: Request, res: Response) => {
                     eq(journals.status, "posted"),
                     lte(journals.date, toDate),
                     inArray(glAccounts.type, ["income", "expense"]),
+                    scope,
                 ),
             )
             .groupBy(glAccounts.type);
@@ -183,6 +192,7 @@ export const getBalanceSheet = async (req: Request, res: Response) => {
 
         res.json({
             asOfDate: toDate,
+            branchId: req.activeBranchId || (req.user as any)?.branchId || null,
             asset,
             liability,
             equity,
@@ -214,6 +224,8 @@ export const getProductProfitability = async (req: Request, res: Response) => {
             ? (to as string).split("T")[0]
             : new Date().toISOString().split("T")[0];
 
+        const scope = branchScope(transactions.branchId, req);
+
         const report = await db
             .select({
                 productId: products.id,
@@ -236,6 +248,7 @@ export const getProductProfitability = async (req: Request, res: Response) => {
                     inArray(transactions.status, ["posted", "paid"]),
                     gte(transactions.date, fromDate),
                     lte(transactions.date, toDate),
+                    scope,
                 ),
             )
             .groupBy(products.id, products.name)
@@ -283,6 +296,8 @@ export const getGlBalances = async (req: Request, res: Response) => {
             );
         }
 
+        const scope = branchScope(journals.branchId, req);
+
         const report = await db
             .select({
                 id: glAccounts.id,
@@ -304,6 +319,7 @@ export const getGlBalances = async (req: Request, res: Response) => {
                     eq(journalEntries.journalId, journals.id),
                     eq(journals.status, "posted"),
                     dateCondition,
+                    scope,
                 ),
             )
             .groupBy(
@@ -329,6 +345,8 @@ export const getCustomerOutstandingAr = async (req: Request, res: Response) => {
             ? (to as string).split("T")[0]
             : new Date().toISOString().split("T")[0];
 
+        const scope = branchScope(openInvoices.branchId, req);
+
         const report = await db
             .select({
                 customerId: contacts.id,
@@ -344,6 +362,7 @@ export const getCustomerOutstandingAr = async (req: Request, res: Response) => {
                     eq(openInvoices.type, "receivable"),
                     lte(openInvoices.dueDate, toDate),
                     sql`${openInvoices.amount} - ${openInvoices.paidAmount} > 0`,
+                    scope,
                 ),
             )
             .groupBy(contacts.id, contacts.name)
@@ -410,7 +429,9 @@ export const getPivotData = async (req: Request, res: Response) => {
 
         if (sourceType === "sales" || sourceType === "purchases") {
             const txType = sourceType === "sales" ? "sales" : "purchase";
+            const txScope = branchScope(transactions.branchId, req);
             const conditions = [eq(transactions.type, txType)];
+            if (txScope) conditions.push(txScope);
             if (fromDate)
                 conditions.push(gte(sql`DATE(${transactions.date})`, fromDate));
             if (toDate)
@@ -430,7 +451,7 @@ export const getPivotData = async (req: Request, res: Response) => {
                     qty: transactionDetails.qty,
                     price: transactionDetails.price,
                     discount: transactionDetails.discount,
-                    unitCost: transactionDetails.unitCost,
+                    unitCost: transactionDetails.totalCost ? sql<number>`${transactionDetails.totalCost} / NULLIF(${transactionDetails.qty}, 0)` : transactionDetails.unitCost,
                     totalCost: transactionDetails.totalCost,
                     amount: transactionDetails.amount,
                     taxRate: transactionDetails.taxRate,
@@ -479,7 +500,9 @@ export const getPivotData = async (req: Request, res: Response) => {
         }
 
         if (sourceType === "stock_movements") {
+            const whScope = branchScope(warehouses.branchId, req);
             const conditions = [];
+            if (whScope) conditions.push(whScope);
             if (fromDate)
                 conditions.push(
                     gte(sql`DATE(${stockMovements.createdAt})`, fromDate),
@@ -537,7 +560,9 @@ export const getPivotData = async (req: Request, res: Response) => {
         }
 
         if (sourceType === "journals") {
+            const jScope = branchScope(journals.branchId, req);
             const conditions = [eq(journals.status, "posted")];
+            if (jScope) conditions.push(jScope);
             if (fromDate)
                 conditions.push(gte(sql`DATE(${journals.date})`, fromDate));
             if (toDate)

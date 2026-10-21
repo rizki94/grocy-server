@@ -11,6 +11,7 @@ export const userInsertSchema = z.object({
     avatar: z.string().optional().nullable(),
     password: z.string().min(6).max(50),
     roleId: z.string().min(1, "Role is required"),
+    branchId: z.string().uuid("Invalid branch").optional().nullable(),
     isActive: z.boolean().default(true),
 });
 

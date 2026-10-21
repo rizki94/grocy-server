@@ -9,8 +9,10 @@ import {
     contacts,
     stocks,
     openInvoices,
+    warehouses,
 } from "@/db/schemas";
 import { eq, inArray, and, sql, or, desc } from "drizzle-orm";
+import { branchScope } from "@/helpers/branch.helper";
 
 export const analyzeBatchSales = async (req: Request, res: Response) => {
     try {
@@ -39,7 +41,8 @@ export const analyzeBatchSales = async (req: Request, res: Response) => {
             .where(
                 and(
                     inArray(transactions.id, orderIds),
-                    eq(transactions.type, "sales")
+                    eq(transactions.type, "sales"),
+                    branchScope(transactions.branchId, req),
                 )
             );
 
@@ -140,7 +143,13 @@ export const analyzeBatchSales = async (req: Request, res: Response) => {
                     totalQuantity: sql<number>`COALESCE(SUM(${stocks.qty}), 0)`,
                 })
                 .from(stocks)
-                .where(inArray(stocks.productId, involvedProductIds))
+                .leftJoin(warehouses, eq(warehouses.id, stocks.warehouseId))
+                .where(
+                    and(
+                        inArray(stocks.productId, involvedProductIds),
+                        branchScope(warehouses.branchId, req),
+                    )
+                )
                 .groupBy(stocks.productId);
 
             for (const s of stockRows) {
@@ -224,6 +233,7 @@ export const analyzeBatchSales = async (req: Request, res: Response) => {
                 .where(
                     and(
                         inArray(openInvoices.contactId, uniqueCustomerIds),
+                        branchScope(openInvoices.branchId, req),
                         or(
                             eq(openInvoices.status, "open"),
                             eq(openInvoices.status, "partial")

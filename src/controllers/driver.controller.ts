@@ -1,7 +1,8 @@
 import { Request, Response } from "express";
 import { db } from "@/db";
 import { drivers, trucks } from "@/db/schemas";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
+import { branchScope, withBranch } from "@/helpers/branch.helper";
 
 const RANDOM_COLORS = [
     "#EF4444",
@@ -24,6 +25,7 @@ function getRandomColor() {
 
 export const getDrivers = async (req: Request, res: Response) => {
     try {
+        const scope = branchScope(drivers.branchId, req);
         const rows = await db
             .select({
                 id: drivers.id,
@@ -33,10 +35,12 @@ export const getDrivers = async (req: Request, res: Response) => {
                 defaultTruckName: trucks.name,
                 defaultTruckPlate: trucks.licensePlate,
                 isActive: drivers.isActive,
+                branchId: drivers.branchId,
                 createdAt: drivers.createdAt,
             })
             .from(drivers)
             .leftJoin(trucks, eq(trucks.id, drivers.defaultTruckId))
+            .where(scope)
             .orderBy(drivers.name);
 
         return res.status(200).json(rows);
@@ -58,12 +62,14 @@ export const createDriver = async (req: Request, res: Response) => {
 
         const [created] = await db
             .insert(drivers)
-            .values({
-                name,
-                color: chosenColor,
-                defaultTruckId: defaultTruckId || null,
-                isActive: isActive !== undefined ? Boolean(isActive) : true,
-            })
+            .values(
+                withBranch({
+                    name,
+                    color: chosenColor,
+                    defaultTruckId: defaultTruckId || null,
+                    isActive: isActive !== undefined ? Boolean(isActive) : true,
+                }, req)
+            )
             .returning();
 
         return res.status(201).json({ message: "Driver created successfully", driver: created });

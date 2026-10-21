@@ -1,7 +1,8 @@
 import { db } from "@/db";
-import { transactions, stocks, openInvoices, products } from "@/db/schemas";
+import { transactions, stocks, openInvoices, products, warehouses } from "@/db/schemas";
 import { and, eq, gte, sql, desc } from "drizzle-orm";
 import { Request, Response } from "express";
+import { branchScope, productBranchFilter } from "@/helpers/branch.helper";
 
 export const getDashboardStats = async (req: Request, res: Response) => {
     try {
@@ -39,6 +40,7 @@ export const getDashboardStats = async (req: Request, res: Response) => {
                         transactions.date,
                         startOfMonth.toISOString().split("T")[0],
                     ),
+                    branchScope(transactions.branchId, req),
                 ),
             );
 
@@ -62,6 +64,7 @@ export const getDashboardStats = async (req: Request, res: Response) => {
                         startOfLastMonth.toISOString().split("T")[0],
                     ),
                     sql`${transactions.date} <= ${endOfLastMonth.toISOString().split("T")[0]}`,
+                    branchScope(transactions.branchId, req),
                 ),
             );
 
@@ -86,6 +89,7 @@ export const getDashboardStats = async (req: Request, res: Response) => {
                         transactions.date,
                         startOfMonth.toISOString().split("T")[0],
                     ),
+                    branchScope(transactions.branchId, req),
                 ),
             );
 
@@ -100,6 +104,7 @@ export const getDashboardStats = async (req: Request, res: Response) => {
                 and(
                     eq(openInvoices.type, "receivable"),
                     eq(openInvoices.status, "open"),
+                    branchScope(openInvoices.branchId, req),
                 ),
             );
 
@@ -113,6 +118,7 @@ export const getDashboardStats = async (req: Request, res: Response) => {
                 and(
                     eq(openInvoices.type, "payable"),
                     eq(openInvoices.status, "open"),
+                    branchScope(openInvoices.branchId, req),
                 ),
             );
 
@@ -126,6 +132,13 @@ export const getDashboardStats = async (req: Request, res: Response) => {
             })
             .from(stocks)
             .innerJoin(products, eq(stocks.productId, products.id))
+            .leftJoin(warehouses, eq(warehouses.id, stocks.warehouseId))
+            .where(
+                and(
+                    productBranchFilter(products, req),
+                    branchScope(warehouses.branchId, req),
+                ),
+            )
             .groupBy(products.id, products.name, products.reorderLevel)
             .having(sql`SUM(${stocks.qty}) < ${products.reorderLevel}`)
             .limit(5);
@@ -141,6 +154,7 @@ export const getDashboardStats = async (req: Request, res: Response) => {
                 status: transactions.status,
             })
             .from(transactions)
+            .where(branchScope(transactions.branchId, req))
             .orderBy(desc(transactions.createdAt))
             .limit(5);
 

@@ -11,9 +11,18 @@ import {
 } from "@/db/schemas";
 import { addDays } from "@/helpers/add-days";
 import { generateInvoice } from "@/helpers/generate-invoice";
+import {
+    branchScope,
+    withBranch,
+    resolveBranchId,
+    resolveBranchCode,
+} from "@/helpers/branch.helper";
 import { logAction } from "@/utils/log-helper";
 import { updateStockForTransaction } from "@/repositories/stock.repository";
-import { purchaseById, extractDetails } from "@/repositories/transaction.repository";
+import {
+    purchaseById,
+    extractDetails,
+} from "@/repositories/transaction.repository";
 import { CacheService } from "@/services/cache-service";
 import {
     transactionWithDetailInsertSchema,
@@ -39,17 +48,12 @@ import { parseTableQuery } from "@/services/table-query";
 
 export async function getAllPurchases(req: Request, res: Response) {
     try {
-        const data = await CacheService.getOrSet(
-            "purchases:all",
-            60,
-            async () => {
-                return db
-                    .select()
-                    .from(transactions)
-                    .where(eq(transactions.type, "purchase"))
-                    .orderBy(transactions.invoice);
-            },
-        );
+        const scope = branchScope(transactions.branchId, req);
+        const data = await db
+            .select()
+            .from(transactions)
+            .where(and(eq(transactions.type, "purchase"), scope))
+            .orderBy(transactions.invoice);
         res.status(200).json(data);
     } catch (error) {
         console.error("Error fetching purchases:", error);
@@ -92,18 +96,24 @@ export const createPurchase = async (req: Request, res: Response) => {
     }
 
     const purchase = parsed.data;
-    const invoice = await generateInvoice("purchase");
+    const branchCode = await resolveBranchCode(req);
+    const invoice = await generateInvoice("purchase", branchCode);
 
     try {
         const [createdPurchase] = await db
             .insert(transactions)
-            .values({
-                ...purchase,
-                invoice,
-                type: "purchase",
-                status: "order",
-                userId: req.user!.id,
-            })
+            .values(
+                withBranch(
+                    {
+                        ...purchase,
+                        invoice,
+                        type: "purchase",
+                        status: "order",
+                        userId: req.user!.id,
+                    },
+                    req,
+                ),
+            )
             .returning();
 
         for (const detail of purchase.details) {
@@ -308,10 +318,15 @@ export const postPurchase = async (req: Request, res: Response) => {
                     ),
                 );
 
+            const journalBranchId = await resolveBranchId(
+                purchase.branchId,
+                req,
+            );
             const [journal] = await tx
                 .insert(journals)
                 .values({
                     transactionId: purchase.id,
+                    branchId: journalBranchId,
                     date: purchase.date,
                     description: `Pembelian ${purchase.invoice}`,
                     status: "posted",
@@ -347,6 +362,7 @@ export const postPurchase = async (req: Request, res: Response) => {
             await tx.insert(openInvoices).values({
                 transactionId: purchase.id,
                 contactId: purchase.contactId,
+                branchId: journalBranchId,
                 type: "payable",
                 dueDate: addDays(purchase.date, purchase.termOfPayment),
                 amount: Number(purchase.totalAmount),
@@ -395,15 +411,15 @@ export const getPaginatedPurchases = async (req: Request, res: Response) => {
 
         const searchCondition = search
             ? or(
-                like(
-                    sql`LOWER(${transactions.invoice})`,
-                    `%${search.toLowerCase()}%`,
-                ),
-                like(
-                    sql`LOWER(${contacts.name})`,
-                    `%${search.toLowerCase()}%`,
-                ),
-            )
+                  like(
+                      sql`LOWER(${transactions.invoice})`,
+                      `%${search.toLowerCase()}%`,
+                  ),
+                  like(
+                      sql`LOWER(${contacts.name})`,
+                      `%${search.toLowerCase()}%`,
+                  ),
+              )
             : undefined;
 
         const filterCondition = select
@@ -413,20 +429,22 @@ export const getPaginatedPurchases = async (req: Request, res: Response) => {
         const dateCondition =
             from && to
                 ? and(
-                    gte(transactions.date, from.toISOString()),
-                    lte(transactions.date, to.toISOString()),
-                )
+                      gte(transactions.date, from.toISOString()),
+                      lte(transactions.date, to.toISOString()),
+                  )
                 : from
-                    ? gte(transactions.date, from.toISOString())
-                    : to
-                        ? lte(transactions.date, to.toISOString())
-                        : undefined;
+                  ? gte(transactions.date, from.toISOString())
+                  : to
+                    ? lte(transactions.date, to.toISOString())
+                    : undefined;
 
         const sortColumns: Record<string, PgColumn> = {
             invoice: transactions.invoice,
         };
 
         const sortColumn = sortColumns[sort] ?? transactions.invoice;
+
+        const scope = branchScope(transactions.branchId, req);
 
         const [purchaseList, [totalCount]] = await Promise.all([
             db
@@ -444,6 +462,7 @@ export const getPaginatedPurchases = async (req: Request, res: Response) => {
                 .where(
                     and(
                         eq(transactions.type, "purchase"),
+                        scope,
                         searchCondition,
                         filterCondition,
                         dateCondition,
@@ -459,6 +478,7 @@ export const getPaginatedPurchases = async (req: Request, res: Response) => {
                 .where(
                     and(
                         eq(transactions.type, "purchase"),
+                        scope,
                         searchCondition,
                         filterCondition,
                         dateCondition,
@@ -540,7 +560,7 @@ export const getPostedPurchasesByContact = async (
                 like(
                     sql`LOWER(${transactions.invoice})`,
                     `%${search.toLowerCase()}%`,
-                )
+                ),
             );
         }
 
@@ -549,7 +569,7 @@ export const getPostedPurchasesByContact = async (
                 .select({ transactionId: transactionDetails.transactionId })
                 .from(transactionDetails)
                 .where(eq(transactionDetails.productId, productId));
-            
+
             const matchingIds = matchingTrans.map((t) => t.transactionId);
             if (matchingIds.length === 0) {
                 return res.status(200).json([]);
@@ -585,13 +605,16 @@ export const getPostedPurchasesByContact = async (
                         amount: transactionDetails.amount,
                     })
                     .from(transactionDetails)
-                    .leftJoin(products, eq(products.id, transactionDetails.productId))
+                    .leftJoin(
+                        products,
+                        eq(products.id, transactionDetails.productId),
+                    )
                     .where(eq(transactionDetails.transactionId, inv.id));
                 return {
                     ...inv,
                     details,
                 };
-            })
+            }),
         );
 
         res.status(200).json(result);
@@ -600,7 +623,6 @@ export const getPostedPurchasesByContact = async (
         res.status(500).json({ message: "Failed to fetch posted purchases" });
     }
 };
-
 
 export const cancelPurchase = async (req: Request, res: Response) => {
     const { id } = req.params;
@@ -614,8 +636,8 @@ export const cancelPurchase = async (req: Request, res: Response) => {
                 .where(eq(transactions.id, id));
 
             if (!original) throw new Error("Purchase not found");
-            if (original.status !== "posted") {
-                throw new Error("Only posted purchases can be voided");
+            if (original.status !== "posted" && original.status !== "partial") {
+                throw new Error("Only posted or partial purchases can be voided");
             }
 
             // 2. Check for Payments
@@ -637,11 +659,20 @@ export const cancelPurchase = async (req: Request, res: Response) => {
                 .where(eq(transactionDetails.transactionId, id));
 
             // 4. Create Reversal Transaction
-            const reversalInvoice = await generateInvoice("purchase");
+            const branchCode = await resolveBranchCode(req);
+            const reversalInvoice = await generateInvoice(
+                "purchase",
+                branchCode,
+            );
+            const reversalBranchId = await resolveBranchId(
+                original.branchId,
+                req,
+            );
             const [reversal] = await tx
                 .insert(transactions)
                 .values({
                     userId: req.user!.id,
+                    branchId: reversalBranchId,
                     type: "purchase",
                     invoice: reversalInvoice,
                     reference: `Void of ${original.invoice}`,
@@ -663,6 +694,7 @@ export const cancelPurchase = async (req: Request, res: Response) => {
                 transactionId: reversal.id,
                 productId: detail.productId,
                 productDetailId: detail.productDetailId,
+                warehouseId: detail.warehouseId,
                 baseRatio: detail.baseRatio,
                 qty: -Number(detail.qty),
                 price: detail.price,
@@ -686,9 +718,9 @@ export const cancelPurchase = async (req: Request, res: Response) => {
             await updateStockForTransaction(
                 reversal.id,
                 "purchase",
-                reversedDetails.map(d => ({
+                reversedDetails.map((d) => ({
                     ...d,
-                    qty: Math.abs(d.qty)
+                    qty: Math.abs(d.qty),
                 })) as any,
                 tx,
             );
@@ -698,6 +730,7 @@ export const cancelPurchase = async (req: Request, res: Response) => {
                 .insert(journals)
                 .values({
                     transactionId: reversal.id,
+                    branchId: reversalBranchId,
                     date: reversal.date,
                     description: `Void Purchase #${original.invoice}`,
                     status: "posted",
@@ -708,19 +741,40 @@ export const cancelPurchase = async (req: Request, res: Response) => {
             const mappings = await tx
                 .select()
                 .from(accountMappings)
-                .where(eq(accountMappings.type, "purchase"));
-
-            const total = Number(original.totalAmount); // Assuming simple total
+                .where(
+                    or(
+                        eq(accountMappings.type, "purchase"),
+                        eq(accountMappings.type, "purchase_tax"),
+                    ),
+                );
 
             for (const map of mappings) {
-                // Swap logic: Debit becomes Credit, Credit becomes Debit
-                await tx.insert(journalEntries).values({
-                    journalId: journal.id,
-                    glAccountId: await findGlAccountByCode(map.glAccountCode),
-                    debit: map.side === "credit" ? total : 0, // Swapped
-                    credit: map.side === "debit" ? total : 0, // Swapped
-                    note: `Void ${map.note}`,
-                });
+                let amount = 0;
+                const totalAmount = Number(original.totalAmount);
+                const totalTax = Number(original.totalTax || 0);
+
+                if (map.type === "purchase") {
+                    if (map.side === "credit") {
+                        amount = totalAmount; // AP
+                    } else {
+                        amount = totalAmount - totalTax; // Inventory (subtotal)
+                    }
+                } else if (map.type === "purchase_tax") {
+                    amount = totalTax; // Tax
+                }
+
+                if (amount === 0) continue;
+
+                const glId = await findGlAccountByCode(map.glAccountCode);
+                if (glId) {
+                    await tx.insert(journalEntries).values({
+                        journalId: journal.id,
+                        glAccountId: glId,
+                        debit: map.side === "credit" ? amount : 0, // Swapped
+                        credit: map.side === "debit" ? amount : 0, // Swapped
+                        note: `Void ${map.note} #${original.invoice}`,
+                    });
+                }
             }
 
             // 8. Delete Original Payable (Open Invoice)

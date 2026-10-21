@@ -32,6 +32,7 @@ import {
     paymentWithLinesInsertSchema,
     paymentWithLinesUpdateSchema,
 } from "@/validators/payment.validator";
+import { resolveBranchId } from "@/helpers/branch.helper";
 
 export async function getReceivableById(req: Request, res: Response) {
     const { id } = req.params;
@@ -259,10 +260,16 @@ export const createReceivableController = async (
     const payment = parsed.data;
 
     try {
+        const branchId = await resolveBranchId(
+            (payment as any).branchId ?? req.activeBranchId ?? req.branchId,
+            req,
+        );
+
         // Force draft status during creation so postPayment can handle side effects
         const createdPayment = await createReceivable(
             { ...payment, status: "draft" },
             req.user!,
+            branchId,
         );
 
         if (payment.status === "posted") {

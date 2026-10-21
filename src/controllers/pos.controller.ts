@@ -23,6 +23,7 @@ import { Request, Response } from "express";
 import { eq, and, ilike, or } from "drizzle-orm";
 import { logAction } from "@/utils/log-helper";
 import { findGlAccountByCode } from "@/repositories/gl-account.repository";
+import { resolveBranchId, resolveBranchCode } from "@/helpers/branch.helper";
 
 export async function checkout(req: Request, res: Response) {
     const {
@@ -80,7 +81,8 @@ export async function checkout(req: Request, res: Response) {
         const contactId = customer?.id;
 
         const result = await db.transaction(async (tx) => {
-            const invoice = await generateInvoice("pos_sales");
+            const branchCode = await resolveBranchCode(req);
+            const invoice = await generateInvoice("pos_sales", branchCode);
 
             const globalSettings = await tx.select().from(settings).where(eq(settings.id, "global")).limit(1).then(r => r[0]);
             
@@ -186,10 +188,12 @@ export async function checkout(req: Request, res: Response) {
                     ),
                 );
 
+            const salesJournalBranchId = await resolveBranchId(transaction.branchId, req);
             const [salesJournal] = await tx
                 .insert(journals)
                 .values({
                     transactionId: transaction.id,
+                    branchId: salesJournalBranchId,
                     date: transaction.date,
                     description: `Penjualan ${transaction.invoice}`,
                     status: "posted",
@@ -249,6 +253,7 @@ export async function checkout(req: Request, res: Response) {
                 .values({
                     transactionId: transaction.id,
                     contactId,
+                    branchId: salesJournalBranchId,
                     type: "receivable",
                     dueDate: new Date().toISOString().split("T")[0],
                     amount: originalTotalAmount,
@@ -345,10 +350,12 @@ export async function checkout(req: Request, res: Response) {
                     });
 
                     // Create Payment Journal
+                    const paymentJournalBranchId = await resolveBranchId(transaction.branchId, req);
                     const [paymentJournal] = await tx
                         .insert(journals)
                         .values({
                             transactionId: transaction.id,
+                            branchId: paymentJournalBranchId,
                             date: payment.date,
                             description: `Pembayaran ${transaction.invoice}`,
                             status: "posted",

@@ -6,10 +6,12 @@ import {
     timestamp,
     uuid,
 } from "drizzle-orm/pg-core";
+import { branches } from "./branch.schema";
 
 export const trucks = pgTable("trucks", {
     id: uuid("id").defaultRandom().primaryKey(),
     name: text("name").notNull(),
+    branchId: uuid("branch_id").references(() => branches.id),
     licensePlate: text("license_plate").notNull().unique(),
     maxWeight: decimalAsNumber(12, 2)("max_weight").notNull().default(0),
     maxVolume: decimalAsNumber(12, 3)("max_volume").notNull().default(0),

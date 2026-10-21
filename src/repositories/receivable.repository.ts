@@ -9,6 +9,7 @@ import {
 } from "@/db/schemas";
 import { PaymentWithLinesInsert } from "@/validators/payment.validator";
 import { eq, sql } from "drizzle-orm";
+import { resolveBranchId } from "@/helpers/branch.helper";
 
 export async function findReceivableById(id: string) {
     const [payment] = await db
@@ -66,12 +67,15 @@ export async function findReceivableById(id: string) {
 export async function createReceivable(
     data: PaymentWithLinesInsert,
     user: Express.User,
+    branchId?: string | null,
 ) {
+    const effectiveBranchId = await resolveBranchId(branchId);
     return await db.transaction(async (tx) => {
         const [payment] = await tx
             .insert(payments)
             .values({
                 contactId: data.contactId,
+                branchId: effectiveBranchId,
                 date: data.date,
                 totalAmount: data.totalAmount,
                 type: data.type,

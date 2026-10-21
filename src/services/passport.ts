@@ -3,7 +3,7 @@ import { Strategy as LocalStrategy } from "passport-local";
 import bcrypt from "bcrypt";
 import { eq, InferSelectModel } from "drizzle-orm";
 import { db } from "@/db";
-import { users } from "@/db/schemas";
+import { users, branches } from "@/db/schemas";
 import { rolePermissions } from "@/db/schemas/role-permission.schema";
 import { permissions } from "@/db/schemas/permission.schema";
 passport.use(
@@ -42,6 +42,16 @@ passport.deserializeUser(async (id: string, done) => {
 
         if (!user) return done(new Error("User not found"), null);
 
+        let branch = null;
+        if (user.branchId) {
+            const [b] = await db
+                .select()
+                .from(branches)
+                .where(eq(branches.id, user.branchId))
+                .limit(1);
+            branch = b || null;
+        }
+
         const rows = await db
             .select({
                 code: permissions.code,
@@ -61,6 +71,8 @@ passport.deserializeUser(async (id: string, done) => {
 
         const userWithAccess = {
             ...user,
+            branch,
+            isHq: branch?.isHq ?? false,
             permissions: allowedPermissions,
         };
 

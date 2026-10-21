@@ -3,6 +3,7 @@ import { relations } from "drizzle-orm";
 import { roles } from "./role.schema";
 import { glAccounts } from "./gl-account.schema";
 import { warehouses } from "./warehouse.schema";
+import { branches } from "./branch.schema";
 
 export const users = pgTable("users", {
     id: uuid("id").defaultRandom().primaryKey(),
@@ -14,9 +15,15 @@ export const users = pgTable("users", {
     roleId: uuid("role_id")
         .notNull()
         .references(() => roles.id),
+    branchId: uuid("branch_id").references(() => branches.id),
     cashGlAccountId: uuid("cash_gl_account_id").references(() => glAccounts.id),
     posWarehouseId: uuid("pos_warehouse_id").references(() => warehouses.id),
     createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
-export const usersRelations = relations(users, ({ one }) => ({}));
+export const usersRelations = relations(users, ({ one }) => ({
+    branch: one(branches, {
+        fields: [users.branchId],
+        references: [branches.id],
+    }),
+}));

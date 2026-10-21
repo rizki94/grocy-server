@@ -70,6 +70,8 @@ export const productInsertSchema = z.object({
     useExpiry: z.boolean().optional().default(false),
     useSerialNumber: z.boolean().optional().default(false),
     reorderLevel: z.number().min(0).optional().default(0),
+    isGlobal: z.boolean().optional().default(true),
+    branchIds: z.array(z.string().uuid()).optional().default([]),
 });
 
 export const productWithDetailInsertSchema = productInsertSchema.extend({

@@ -9,10 +9,12 @@ import {
 import { transactions } from "./transaction.schema";
 import { decimalAsNumber } from "@/types/decimal-as-number";
 import { glAccounts } from "./gl-account.schema";
+import { branches } from "./branch.schema";
 
 export const journals = pgTable("journals", {
     id: uuid("id").defaultRandom().primaryKey(),
     transactionId: uuid("transaction_id").references(() => transactions.id),
+    branchId: uuid("branch_id").references(() => branches.id),
     date: date("date").notNull(),
     description: text("description"),
     status: text("status", {

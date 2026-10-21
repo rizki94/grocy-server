@@ -3,6 +3,7 @@ import { users } from "./user.schema";
 import { decimalAsNumber } from "@/types/decimal-as-number";
 import { relations } from "drizzle-orm";
 import { transactions } from "./transaction.schema";
+import { branches } from "./branch.schema";
 
 export const posSessionStatusEnum = pgEnum("pos_session_status", [
     "open",
@@ -14,6 +15,7 @@ export const posSessions = pgTable("pos_sessions", {
     userId: uuid("user_id")
         .notNull()
         .references(() => users.id),
+    branchId: uuid("branch_id").references(() => branches.id),
     status: posSessionStatusEnum("status").notNull().default("open"),
     openingBalance: decimalAsNumber(12, 2)("opening_balance")
         .notNull()

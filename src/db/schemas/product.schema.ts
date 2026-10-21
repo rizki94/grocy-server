@@ -12,6 +12,7 @@ import {
 import { taxes } from "./tax.schema";
 import { productUnits } from "./product-unit.schema";
 import { priceGroups } from "./price-group.schema";
+import { branches } from "./branch.schema";
 
 export const products = pgTable("products", {
     id: uuid("id").defaultRandom().primaryKey(),
@@ -28,6 +29,7 @@ export const products = pgTable("products", {
     useExpiry: boolean("use_expiry").notNull().default(false),
     useSerialNumber: boolean("use_serial_number").notNull().default(false),
     reorderLevel: decimalAsNumber(12, 2)("reorder_level").notNull().default(0),
+    isGlobal: boolean("is_global").notNull().default(true),
 });
 
 export const productDetails = pgTable("product_details", {
@@ -79,6 +81,8 @@ export const productDetailPrices = pgTable(
         priceGroupId: uuid("price_group_id")
             .notNull()
             .references(() => priceGroups.id, { onDelete: "cascade" }),
+        branchId: uuid("branch_id")
+            .references(() => branches.id, { onDelete: "cascade" }),
         price: decimalAsNumber(12, 2)("price").notNull().default(0),
         createdAt: timestamp("created_at").defaultNow().notNull(),
         updatedAt: timestamp("updated_at")
@@ -86,5 +90,5 @@ export const productDetailPrices = pgTable(
             .notNull()
             .$onUpdate(() => new Date()),
     },
-    (t) => [unique().on(t.productDetailId, t.priceGroupId)],
+    (t) => [unique().on(t.productDetailId, t.priceGroupId, t.branchId)],
 );

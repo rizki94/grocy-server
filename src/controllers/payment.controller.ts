@@ -34,6 +34,7 @@ import {
     paymentWithLinesInsertSchema,
     paymentWithLinesUpdateSchema,
 } from "@/validators/payment.validator";
+import { branchScope, withBranch, resolveBranchId } from "@/helpers/branch.helper";
 
 export async function getPaymentById(req: Request, res: Response) {
     const { id } = req.params;
@@ -101,6 +102,8 @@ export const getPaginatedPayments = async (req: Request, res: Response) => {
 
         const sortColumn = sortColumns[sortKey] ?? payments.date;
 
+        const scope = branchScope(payments.branchId, req);
+
         const [payableList, totalCount] = await Promise.all([
             db
                 .select({
@@ -122,7 +125,7 @@ export const getPaginatedPayments = async (req: Request, res: Response) => {
                     transactions,
                     eq(transactions.id, openInvoices.transactionId),
                 )
-                .where(and(scopeData, searchCondition, filterCondition))
+                .where(and(scopeData, scope, searchCondition, filterCondition))
                 .groupBy(payments.id, contacts.name)
                 .orderBy(order === "desc" ? desc(sortColumn) : asc(sortColumn))
                 .limit(pageSize)
@@ -131,7 +134,7 @@ export const getPaginatedPayments = async (req: Request, res: Response) => {
                 .select({ count: sql<number>`count(DISTINCT ${payments.id})` })
                 .from(payments)
                 .innerJoin(contacts, eq(contacts.id, payments.contactId))
-                .where(and(scopeData, searchCondition, filterCondition)),
+                .where(and(scopeData, scope, searchCondition, filterCondition)),
         ]);
 
         res.json({
@@ -256,10 +259,16 @@ export const createPaymentController = async (req: Request, res: Response) => {
     const payment = parsed.data;
 
     try {
+        const branchId = await resolveBranchId(
+            (payment as any).branchId ?? req.activeBranchId ?? req.branchId,
+            req,
+        );
+
         // Force draft status during creation so postPayment can handle side effects
         const createdPayment = await createPayment(
             { ...payment, status: "draft" },
             req.user!,
+            branchId,
         );
 
         if (payment.status === "posted") {

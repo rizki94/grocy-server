@@ -24,3 +24,5 @@ export * from "./driver.schema";
 export * from "./delivery.schema";
 export * from "./return-reason.schema";
 export * from "./marketplace.schema";
+export * from "./branch.schema";
+export * from "./expense.schema";

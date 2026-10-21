@@ -17,13 +17,14 @@ export const findJournalById = async (id: string) => {
             entries: journalEntries,
         })
         .from(journals)
-        .innerJoin(journalEntries, eq(journals.id, journalEntries.journalId))
+        .leftJoin(journalEntries, eq(journals.id, journalEntries.journalId))
         .where(eq(journals.id, id));
 };
 
 export async function createJournal(
     data: JournalWithEntriesInsert,
     user: Express.User,
+    branchId?: string | null,
 ) {
     return await db.transaction(async (tx) => {
         const [journal] = await tx
@@ -32,6 +33,7 @@ export async function createJournal(
                 date: data.date,
                 description: data.description,
                 status: data.status,
+                ...(branchId ? { branchId } : {}),
             })
             .returning();
 

@@ -14,6 +14,7 @@ import {
 import { and, asc, desc, eq, gte, like, lte, or, sql } from "drizzle-orm";
 import { PgColumn } from "drizzle-orm/pg-core";
 import { Request, Response } from "express";
+import { branchScope } from "@/helpers/branch.helper";
 
 export const getAllJournals = async (req: Request, res: Response) => {
     try {
@@ -34,7 +35,7 @@ export const getJournalById = async (req: Request, res: Response) => {
         }
 
         const { journal } = rows[0];
-        const entries = rows.filter((r) => r.entries).map((r) => r.entries!);
+        const entries = rows.filter((r) => r.entries && r.entries.id).map((r) => r.entries!);
 
         res.status(200).json({ ...journal, entries });
     } catch (error) {
@@ -56,7 +57,7 @@ export const createJournalController = async (req: Request, res: Response) => {
     const data = parsed.data;
 
     try {
-        const createdJournal = await createJournal(data, req.user!);
+        const createdJournal = await createJournal(data, req.user!, req.activeBranchId ?? req.branchId ?? null);
         logAction(req, {
             action: "insert",
             table: "journals",
@@ -189,11 +190,13 @@ export const getPaginatedJournals = async (req: Request, res: Response) => {
         const sortKey = sortColumns[sort as string] ?? journals.description;
         const sortOrder = order === "desc" ? desc(sortKey) : asc(sortKey);
 
+        const scope = branchScope(journals.branchId, req);
+
         const [journalList, totalCount] = await Promise.all([
             db
                 .select()
                 .from(journals)
-                .where(and(searchCondition, dateCondition, statusCondition))
+                .where(and(scope, searchCondition, dateCondition, statusCondition))
                 .orderBy(sortOrder)
                 .limit(limit)
                 .offset(offset),
@@ -201,7 +204,7 @@ export const getPaginatedJournals = async (req: Request, res: Response) => {
             db
                 .select({ count: sql<number>`count(*)` })
                 .from(journals)
-                .where(and(searchCondition, dateCondition, statusCondition)),
+                .where(and(scope, searchCondition, dateCondition, statusCondition)),
         ]);
 
         const total = Number(totalCount[0]?.count || 0);

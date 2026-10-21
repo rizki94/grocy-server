@@ -13,6 +13,7 @@ import {
 import { and, asc, desc, eq, inArray, like, or, sql } from "drizzle-orm";
 import { PgColumn } from "drizzle-orm/pg-core";
 import { Request, Response } from "express";
+import { branchScope, productBranchFilter } from "@/helpers/branch.helper";
 
 export const getMonitoringStock = async (req: Request, res: Response) => {
     const query = req.query;
@@ -35,6 +36,9 @@ export const getMonitoringStock = async (req: Request, res: Response) => {
         : undefined;
     
     const warehouseCondition = warehouseId ? eq(stocks.warehouseId, warehouseId) : undefined;
+    const branchCondition = branchScope(warehouses.branchId, req);
+    const prodCondition = productBranchFilter(products, req);
+    const filterCondition = and(searchCondition, warehouseCondition, branchCondition, prodCondition);
     
     const order = (query.order as string) === "desc" ? "desc" : "asc";
     const sortColumn = sortColumns[sortKey] ?? products.name;
@@ -64,7 +68,7 @@ export const getMonitoringStock = async (req: Request, res: Response) => {
                     productUnits,
                     eq(productUnits.id, productDetails.unitId),
                 )
-                .where(and(searchCondition, warehouseCondition))
+                .where(filterCondition)
                 .groupBy(stocks.productId, products.name, warehouses.name, productUnits.name, productDetails.baseRatio)
                 .orderBy(order === "desc" ? desc(sortColumn) : asc(sortColumn))
                 .limit(pageSize)
@@ -76,7 +80,7 @@ export const getMonitoringStock = async (req: Request, res: Response) => {
                 .from(stocks)
                 .innerJoin(products, eq(stocks.productId, products.id))
                 .leftJoin(warehouses, eq(warehouses.id, stocks.warehouseId))
-                .where(and(searchCondition, warehouseCondition)),
+                .where(filterCondition),
         ]);
 
         const productIds = stockList.map((s) => s.productId);
@@ -151,6 +155,10 @@ export const getMovementStocks = async (req: Request, res: Response) => {
 
     const sortColumn = sortColumns[sortKey] ?? transactions.date;
 
+    const branchCondition = branchScope(warehouses.branchId, req);
+    const prodCondition = productBranchFilter(products, req);
+    const filterCondition = and(branchCondition, prodCondition);
+
     try {
         const [stockMovementList, [totalCount]] = await Promise.all([
             db
@@ -186,6 +194,7 @@ export const getMovementStocks = async (req: Request, res: Response) => {
                     eq(transactions.id, stockMovements.transactionId),
                 )
                 .leftJoin(contacts, eq(contacts.id, transactions.contactId))
+                .where(filterCondition)
                 .orderBy(order === "desc" ? desc(sortColumn) : asc(sortColumn))
                 .limit(pageSize)
                 .offset(offset),
@@ -193,7 +202,9 @@ export const getMovementStocks = async (req: Request, res: Response) => {
                 .select({ count: sql<number>`count(*)` })
                 .from(stockMovements)
                 .innerJoin(stocks, eq(stocks.id, stockMovements.stockId))
-                .innerJoin(products, eq(stocks.productId, products.id)),
+                .leftJoin(warehouses, eq(warehouses.id, stocks.warehouseId))
+                .innerJoin(products, eq(stocks.productId, products.id))
+                .where(filterCondition),
         ]);
 
         const productIds = Array.from(new Set(stockMovementList.map((s) => s.productId)));

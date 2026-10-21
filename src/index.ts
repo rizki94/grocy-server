@@ -12,6 +12,7 @@ import { sessionMiddleware } from "./services/session";
 import { passportMiddleware } from "./services/passport";
 import { errorHandler } from "./middleware/error-handler";
 import { notFound } from "./middleware/not-found";
+import { branchMiddleware } from "./middleware/branch";
 
 import { logger } from "./logger";
 import pinoHttp from "pino-http";
@@ -54,7 +55,7 @@ app.use(express.json({ limit: "50mb" }));
 app.use(corsMiddleware);
 app.use(sessionMiddleware);
 app.use(passportMiddleware);
-
+app.use(branchMiddleware);
 
 app.use("/api", route);
 app.use("/uploads", express.static("uploads"));

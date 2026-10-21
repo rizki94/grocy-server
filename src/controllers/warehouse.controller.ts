@@ -1,17 +1,21 @@
 import { db } from "@/db";
-import { warehouses } from "@/db/schemas";
+import { warehouses, branches } from "@/db/schemas";
 import { logAction } from "@/utils/log-helper";
 import { CacheService } from "@/services/cache-service";
 import { warehouseInsertSchema, warehouseUpdateSchema } from "@/validators/warehouse.validator";
 import { and, asc, desc, eq, like, or, sql } from "drizzle-orm";
 import { PgColumn } from "drizzle-orm/pg-core";
 import { Request, Response } from "express";
+import { branchScope, withBranch } from "@/helpers/branch.helper";
 
 export async function getAllWarehouses(req: Request, res: Response) {
     try {
-        const data = await CacheService.getOrSet("warehouses:all", 60, async () => {
-            return db.select().from(warehouses).orderBy(warehouses.name);
-        });
+        const scope = branchScope(warehouses.branchId, req);
+        const data = await db
+            .select()
+            .from(warehouses)
+            .where(scope)
+            .orderBy(warehouses.name);
         res.status(200).json(data);
     } catch (error) {
         console.error("Error fetching warehouses:", error);
@@ -21,10 +25,11 @@ export async function getAllWarehouses(req: Request, res: Response) {
 
 export async function getActiveWarehouses(req: Request, res: Response) {
     try {
+        const scope = branchScope(warehouses.branchId, req);
         const data = await db
             .select()
             .from(warehouses)
-            .where(eq(warehouses.isActive, true))
+            .where(and(eq(warehouses.isActive, true), scope))
             .orderBy(warehouses.name);
 
         res.status(200).json(data);
@@ -74,7 +79,7 @@ export const createWarehouse = async (req: Request, res: Response) => {
 
         const [createdWarehouse] = await db
             .insert(warehouses)
-            .values(parsed.data)
+            .values(withBranch(parsed.data, req))
             .returning();
 
         logAction(req, {
@@ -157,9 +162,10 @@ export const getPaginatedWarehouses = async (req: Request, res: Response) => {
         const offset = pageIndex * pageSize;
 
         const search = (query.search as string) ?? "";
+        const scope = branchScope(warehouses.branchId, req);
         const searchCondition = search
-            ? or(like(sql`LOWER(${warehouses.name})`, `%${search.toLowerCase()}%`))
-            : undefined;
+            ? and(or(like(sql`LOWER(${warehouses.name})`, `%${search.toLowerCase()}%`)), scope)
+            : scope;
 
         const sortColumns: Record<string, PgColumn> = {
             name: warehouses.name,
@@ -172,8 +178,20 @@ export const getPaginatedWarehouses = async (req: Request, res: Response) => {
 
         const [warehouseList, totalCount] = await Promise.all([
             db
-                .select()
+                .select({
+                    id: warehouses.id,
+                    name: warehouses.name,
+                    branchId: warehouses.branchId,
+                    branchName: branches.name,
+                    branchCode: branches.code,
+                    address: warehouses.address,
+                    phone: warehouses.phone,
+                    isActive: warehouses.isActive,
+                    createdAt: warehouses.createdAt,
+                    updatedAt: warehouses.updatedAt,
+                })
                 .from(warehouses)
+                .leftJoin(branches, eq(branches.id, warehouses.branchId))
                 .where(searchCondition)
                 .orderBy(order === "desc" ? desc(sortColumn) : asc(sortColumn))
                 .limit(pageSize)
