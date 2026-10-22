@@ -45,13 +45,16 @@ async function fixTransactionStocks() {
     console.log(`   Fetched ${mssqlStockRes.recordset.length} product/warehouse stock records from SQL Server.`);
     await pool.close();
 
-    // 3. Build warehouse map by code
+    // 3. Build warehouse map by name
     const allWarehouses = await db.select().from(warehouses);
-    const warehouseMapByCode: Record<string, string> = {};
+    const warehouseMapByName: Record<string, string> = {};
     for (const w of allWarehouses) {
-        if (w.code) warehouseMapByCode[w.code.trim()] = w.id;
+        warehouseMapByName[w.name.trim()] = w.id;
     }
-    const defaultWarehouse = allWarehouses.find(w => w.isDefault) || allWarehouses[0];
+    const defaultWarehouse = allWarehouses.find((w) => w.isActive) || allWarehouses[0];
+    if (!defaultWarehouse) {
+        throw new Error("No warehouse is available for stock recalculation.");
+    }
 
     // 4. Build product map by sku
     const allDetails = await db.select({
@@ -76,7 +79,7 @@ async function fixTransactionStocks() {
         if (!productId) continue;
 
         const whCode = String(r.warehouseCode || "").trim();
-        const warehouseId = warehouseMapByCode[whCode] || defaultWarehouse.id;
+        const warehouseId = warehouseMapByName[whCode] || defaultWarehouse.id;
         const baseQty = Number(r.totalBaseQty) || 0;
 
         const key = `${productId}_${warehouseId}`;

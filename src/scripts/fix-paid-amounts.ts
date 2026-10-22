@@ -112,7 +112,7 @@ async function main() {
     for (const oi of allOIWithTx) {
         if (!oi.transactionId) continue;
 
-        let txStatus = "posted";
+        let txStatus: typeof transactions.$inferSelect.status = "posted";
         if (oi.status === "paid" || oi.status === "overpaid") txStatus = "paid";
         else if (oi.status === "partial") txStatus = "partial";
 

@@ -220,7 +220,14 @@ async function main() {
         categoryAttr = createdAttr;
     } else {
         // Merge options
-        const mergedOptions = Array.from(new Set([...(existingCategoryAttr.options || []), ...allCategoryOptions]));
+        const existingOptions = Array.isArray(existingCategoryAttr.options)
+            ? existingCategoryAttr.options.filter(
+                  (option): option is string => typeof option === "string",
+              )
+            : [];
+        const mergedOptions = Array.from(
+            new Set([...existingOptions, ...allCategoryOptions]),
+        );
         await db
             .update(productAttributes)
             .set({ options: mergedOptions })

@@ -24,6 +24,11 @@ import {
 import { and, eq, sql, gte, lte, desc, inArray, asc, ilike, or } from "drizzle-orm";
 import { branchScope } from "@/helpers/branch.helper";
 
+const isDocumentStatus = (
+    status: string,
+): status is "draft" | "posted" | "cancelled" =>
+    status === "draft" || status === "posted" || status === "cancelled";
+
 export const getProfitLoss = async (req: Request, res: Response) => {
     try {
         const { from, to } = req.query;
@@ -769,7 +774,11 @@ export const getTransactionSummary = async (req: Request, res: Response) => {
             const scope = branchScope(expenses.branchId, req);
             const conditions = [
                 scope,
-                status ? eq(expenses.status, status) : undefined,
+                status
+                    ? isDocumentStatus(status)
+                        ? eq(expenses.status, status)
+                        : sql`false`
+                    : undefined,
                 fromDate ? gte(expenses.date, fromDate) : undefined,
                 toDate ? lte(expenses.date, toDate) : undefined,
                 userId ? eq(expenses.userId, userId) : undefined,
@@ -820,7 +829,11 @@ export const getTransactionSummary = async (req: Request, res: Response) => {
             const scope = branchScope(incomes.branchId, req);
             const conditions = [
                 scope,
-                status ? eq(incomes.status, status) : undefined,
+                status
+                    ? isDocumentStatus(status)
+                        ? eq(incomes.status, status)
+                        : sql`false`
+                    : undefined,
                 fromDate ? gte(incomes.date, fromDate) : undefined,
                 toDate ? lte(incomes.date, toDate) : undefined,
                 userId ? eq(incomes.userId, userId) : undefined,

@@ -168,7 +168,12 @@ async function main() {
 
     // 6. Update Account Mappings with real migrated codes
     console.log("6. Updating System Account Mappings...");
-    const mappingsToSet = [
+    const mappingsToSet: Array<{
+        type: (typeof accountMappings.$inferSelect)["type"];
+        side: NonNullable<(typeof accountMappings.$inferSelect)["side"]>;
+        glAccountCode: string;
+        note: string;
+    }> = [
         { type: "purchase", side: "debit", glAccountCode: "1104.101", note: "PERSEDIAAN BARANG" },
         { type: "purchase", side: "credit", glAccountCode: "2102.101", note: "HUTANG DAGANG" },
         { type: "sales", side: "debit", glAccountCode: "1103.101", note: "PIUTANG DAGANG" },
@@ -191,8 +196,8 @@ async function main() {
 
         if (!existing) {
             await db.insert(accountMappings).values({
-                type: m.type as any,
-                side: m.side as any,
+                type: m.type,
+                side: m.side,
                 glAccountCode: m.glAccountCode,
                 note: m.note,
             });
