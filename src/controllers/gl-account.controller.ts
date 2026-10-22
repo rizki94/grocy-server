@@ -101,7 +101,7 @@ export const createGlAccount = async (req: Request, res: Response) => {
             table: "gl_accounts",
             data: createdGlAccount,
             userId: req.user!.id,
-            msg: `created gl account #${createdGlAccount.id}`,
+            msg: `created gl account ${createdGlAccount.code}`,
         });
 
         return res.status(201).json({
@@ -147,7 +147,7 @@ export const updateGlAccount = async (req: Request, res: Response) => {
             oldData: oldGlAccount,
             data: updated,
             userId: req.user!.id,
-            msg: `updated gl account #${updated.id}`,
+            msg: `updated gl account ${updated.code}`,
         });
 
         res.json({ message: "GL account updated", account: updated });

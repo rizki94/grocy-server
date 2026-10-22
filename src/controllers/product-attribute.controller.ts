@@ -78,7 +78,7 @@ export const createProductAttribute = async (req: Request, res: Response) => {
             table: "product_attributes",
             data: createdAttribute,
             userId: req.user!.id,
-            msg: `created attribute #${createdAttribute.id}`,
+            msg: `created attribute "${createdAttribute.name}"`,
         });
     } catch (error) {
         console.error("error creating attribute:", error);
@@ -131,7 +131,7 @@ export const updateProductAttribute = async (req: Request, res: Response) => {
             oldData: oldProductAttribute,
             data: updatedProductAttribute,
             userId: req.user!.id,
-            msg: `updated attribute #${updatedProductAttribute.id}`,
+            msg: `updated attribute "${updatedProductAttribute.name}"`,
         });
 
         return res.status(200).json({

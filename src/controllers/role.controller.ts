@@ -89,7 +89,7 @@ export const createRole = async (req: Request, res: Response) => {
             table: "roles",
             data: { ...newRole, permissions: permissions ?? [] },
             userId: req.user!.id,
-            msg: `created role #${newRole.id}`,
+            msg: `created role "${newRole.name}"`,
         });
 
         res.status(201).json({
@@ -142,7 +142,7 @@ export const updateRole = async (req: Request, res: Response) => {
             table: "roles",
             data: { ...updated, permissions },
             userId: req.user!.id,
-            msg: `updated role #${id}`,
+            msg: `updated role "${updated.name}"`,
         });
         res.status(200).json({
             message: "Role updated successfully",
@@ -179,6 +179,8 @@ export const updatePermissions = async (req: Request, res: Response) => {
                 ),
             )
             .limit(1);
+        const [roleRecord] = await db.select({ name: roles.name }).from(roles).where(eq(roles.id, roleId)).limit(1);
+        const roleName = roleRecord?.name || roleId;
         if (existing.length > 0) {
             const record = existing[0];
             await db
@@ -193,7 +195,7 @@ export const updatePermissions = async (req: Request, res: Response) => {
                 oldData: record,
                 data: { roleId, permissionId, hasPermission },
                 userId: req.user!.id,
-                msg: `updated permission for role #${roleId}`,
+                msg: `updated permission for role "${roleName}"`,
             });
             return res.status(201).json({
                 message: "Permission updated successfully",
@@ -214,7 +216,7 @@ export const updatePermissions = async (req: Request, res: Response) => {
                 table: "role_permissions",
                 data: newPerm,
                 userId: req.user!.id,
-                msg: `assigned permission to role #${roleId}`,
+                msg: `assigned permission to role "${roleName}"`,
             });
 
             return res.status(201).json({

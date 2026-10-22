@@ -363,7 +363,7 @@ export const createProduct = async (req: Request, res: Response) => {
             table: "products",
             data: { ...createdProduct, details: product.details, attributes: product.attributes, images: product.images },
             userId: req.user!.id,
-            msg: `created product #${createdProduct.id}`,
+            msg: `created product "${createdProduct.name}"`,
         });
 
         return res
@@ -635,7 +635,7 @@ export const updateProduct = async (req: Request, res: Response) => {
             oldData: existingDetails, // existingDetails were fetched at line 242
             data: product,
             userId: req.user!.id,
-            msg: `updated product #${product.id}`,
+            msg: `updated product "${product.name}"`,
         });
 
         return res.json({ message: "Product updated successfully" });

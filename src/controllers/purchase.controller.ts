@@ -10,12 +10,13 @@ import {
     transactions,
 } from "@/db/schemas";
 import { addDays } from "@/helpers/add-days";
-import { generateInvoice } from "@/helpers/generate-invoice";
+import { generateInvoice, generateJournalInvoice } from "@/helpers/generate-invoice";
 import {
     branchScope,
     withBranch,
     resolveBranchId,
     resolveBranchCode,
+    resolveBranchCodeFromId,
 } from "@/helpers/branch.helper";
 import { logAction } from "@/utils/log-helper";
 import { updateStockForTransaction } from "@/repositories/stock.repository";
@@ -135,7 +136,7 @@ export const createPurchase = async (req: Request, res: Response) => {
                 details: purchase.details,
             },
             userId: req.user!.id,
-            msg: `created purchase #${createdPurchase.id}`,
+            msg: `created purchase ${createdPurchase.invoice}`,
         });
 
         const rows = await purchaseById(createdPurchase.id);
@@ -242,7 +243,7 @@ export const updatePurchase = async (req: Request, res: Response) => {
                 details: purchase.details,
             },
             userId: req.user!.id,
-            msg: `updated purchase #${updatedPurchase.id}`,
+            msg: `updated purchase ${updatedPurchase.invoice}`,
         });
 
         return res.status(200).json({
@@ -322,9 +323,12 @@ export const postPurchase = async (req: Request, res: Response) => {
                 purchase.branchId,
                 req,
             );
+            const journalBranchCode = await resolveBranchCodeFromId(journalBranchId);
+            const journalInvoice = await generateJournalInvoice("purchase", journalBranchCode);
             const [journal] = await tx
                 .insert(journals)
                 .values({
+                    invoice: journalInvoice,
                     transactionId: purchase.id,
                     branchId: journalBranchId,
                     date: purchase.date,
@@ -377,7 +381,7 @@ export const postPurchase = async (req: Request, res: Response) => {
                 table: "transactions",
                 data: purchase,
                 userId: req.user!.id,
-                msg: `posted purchase #${purchase.id}`,
+                msg: `posted purchase ${purchase.invoice}`,
             });
         });
 
@@ -728,9 +732,12 @@ export const cancelPurchase = async (req: Request, res: Response) => {
             );
 
             // 7. Create Reversal Journal
+            const reversalBranchCode = await resolveBranchCodeFromId(reversalBranchId);
+            const reversalJournalInvoice = await generateJournalInvoice("purchase", reversalBranchCode);
             const [journal] = await tx
                 .insert(journals)
                 .values({
+                    invoice: reversalJournalInvoice,
                     transactionId: reversal.id,
                     branchId: reversalBranchId,
                     date: reversal.date,
@@ -800,7 +807,7 @@ export const cancelPurchase = async (req: Request, res: Response) => {
                 table: "transactions",
                 data: original,
                 userId: req.user!.id,
-                msg: `voided purchase #${original.id}`,
+                msg: `voided purchase ${original.invoice}`,
             });
         });
 

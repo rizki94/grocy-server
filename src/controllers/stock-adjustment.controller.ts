@@ -5,7 +5,7 @@ import {
     transactionDetails,
     transactions,
 } from "@/db/schemas";
-import { generateInvoice } from "@/helpers/generate-invoice";
+import { generateInvoice, generateJournalInvoice } from "@/helpers/generate-invoice";
 import { updateStockForTransaction } from "@/repositories/stock.repository";
 import { purchaseById, extractDetails } from "@/repositories/transaction.repository";
 import {
@@ -18,7 +18,7 @@ import { Request, Response } from "express";
 import { parseTableQuery } from "@/services/table-query";
 import { PgColumn } from "drizzle-orm/pg-core";
 import { findGlAccountByCode } from "@/repositories/gl-account.repository";
-import { branchScope, withBranch, resolveBranchId, resolveBranchCode } from "@/helpers/branch.helper";
+import { branchScope, withBranch, resolveBranchId, resolveBranchCode, resolveBranchCodeFromId } from "@/helpers/branch.helper";
 
 export async function getAllAdjustments(req: Request, res: Response) {
     try {
@@ -105,7 +105,7 @@ export const createAdjustment = async (req: Request, res: Response) => {
             table: "transactions",
             data: { ...created, details: adjustment.details },
             userId: req.user!.id,
-            msg: `created adjustment #${created.id}`,
+            msg: `created adjustment ${created.invoice}`,
         });
 
         return res
@@ -190,7 +190,7 @@ export const updateAdjustment = async (req: Request, res: Response) => {
             oldData: { ...oldData, details: existingDetails },
             data: { ...updated, details: adjustment.details },
             userId: req.user!.id,
-            msg: `updated adjustment #${updated.id}`,
+            msg: `updated adjustment ${updated.invoice}`,
         });
 
         return res.status(200).json({ message: "Adjustment updated" });
@@ -282,9 +282,12 @@ export const postAdjustment = async (req: Request, res: Response) => {
 
             // Create Journal
             const adjustmentBranchId = await resolveBranchId(adjustment.branchId, req);
+            const adjustmentBranchCode = await resolveBranchCodeFromId(adjustmentBranchId);
+            const adjustmentJournalInvoice = await generateJournalInvoice("adjustment", adjustmentBranchCode);
             const [journal] = await tx
                 .insert(journals)
                 .values({
+                    invoice: adjustmentJournalInvoice,
                     transactionId: adjustment.id,
                     branchId: adjustmentBranchId,
                     date: adjustment.date,
@@ -343,7 +346,7 @@ export const postAdjustment = async (req: Request, res: Response) => {
                 table: "transactions",
                 data: adjustment,
                 userId: req.user!.id,
-                msg: `posted adjustment #${adjustment.id}`,
+                msg: `posted adjustment ${adjustment.invoice}`,
             });
         });
 
@@ -536,9 +539,12 @@ export const cancelAdjustment = async (req: Request, res: Response) => {
                 .reduce((sum, d) => sum + Number(d.totalCost), 0);
 
             // 7. Create Journal for Reversal
+            const reversalBranchCode = await resolveBranchCodeFromId(reversalBranchId);
+            const reversalJournalInvoice = await generateJournalInvoice("adjustment", reversalBranchCode);
             const [journal] = await tx
                 .insert(journals)
                 .values({
+                    invoice: reversalJournalInvoice,
                     transactionId: reversal.id,
                     branchId: reversalBranchId,
                     date: reversal.date,
@@ -603,7 +609,7 @@ export const cancelAdjustment = async (req: Request, res: Response) => {
                 table: "transactions",
                 data: original,
                 userId: req.user!.id,
-                msg: `voided adjustment #${original.id}`,
+                msg: `voided adjustment ${original.invoice}`,
             });
         });
 

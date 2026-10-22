@@ -47,7 +47,7 @@ export const login = async (
                         timestamp: new Date().toISOString(),
                     },
                     userId: user.id,
-                    msg: `logged in user #${user.id}`,
+                    msg: `logged in user "${user.username}"`,
                 });
 
                 return res.status(200).json({

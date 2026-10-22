@@ -133,7 +133,7 @@ export const createTransfer = async (req: Request, res: Response) => {
             table: "transactions",
             data: { ...created, details: transfer.details },
             userId: req.user!.id,
-            msg: `created stock transfer #${created.id}`,
+            msg: `created stock transfer ${created.invoice}`,
         });
 
         res.status(201).json(created);
@@ -230,7 +230,7 @@ export const updateTransfer = async (req: Request, res: Response) => {
             table: "transactions",
             data: { ...updated, details: transfer.details },
             userId: req.user!.id,
-            msg: `updated stock transfer #${updated.id}`,
+            msg: `updated stock transfer ${updated.invoice}`,
         });
 
         res.status(200).json(updated);
@@ -321,7 +321,7 @@ export const postTransfer = async (req: Request, res: Response) => {
                 table: "transactions",
                 data: transfer,
                 userId: req.user!.id,
-                msg: `posted stock transfer #${transfer.id}`,
+                msg: `posted stock transfer ${transfer.invoice}`,
             });
         });
 
@@ -473,7 +473,7 @@ export const cancelTransfer = async (req: Request, res: Response) => {
                 table: "transactions",
                 data: transfer,
                 userId: req.user!.id,
-                msg: `voided transfer #${transfer.id}`,
+                msg: `voided transfer ${transfer.invoice}`,
             });
         });
 

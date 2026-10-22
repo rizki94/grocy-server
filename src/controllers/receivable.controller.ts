@@ -33,6 +33,7 @@ import {
     paymentWithLinesUpdateSchema,
 } from "@/validators/payment.validator";
 import { resolveBranchId } from "@/helpers/branch.helper";
+import { validatePeriodNotClosed } from "@/helpers/period-closing.helper";
 
 export async function getReceivableById(req: Request, res: Response) {
     const { id } = req.params;
@@ -283,7 +284,7 @@ export const createReceivableController = async (
             table: "payments",
             data: createdPayment,
             userId: req.user!.id,
-            msg: `created receivable #${createdPayment.id}`,
+            msg: `created receivable ${createdPayment.reference || createdPayment.id}`,
         });
 
         return res.status(201).json(createdPayment);
@@ -316,7 +317,7 @@ export const updateReceivableController = async (
             table: "payments",
             data: updatedPayment,
             userId: req.user!.id,
-            msg: `updated receivable #${payment.id}`,
+            msg: `updated receivable ${payment.reference || payment.id}`,
         });
 
         res.json({
@@ -331,6 +332,12 @@ export const updateReceivableController = async (
 export const postReceivableController = async (req: Request, res: Response) => {
     const { id } = req.params;
     try {
+        const [existing] = await db
+            .select({ reference: payments.reference })
+            .from(payments)
+            .where(eq(payments.id, id))
+            .limit(1);
+
         const result = await postPayment(id);
 
         logAction(req, {
@@ -338,7 +345,7 @@ export const postReceivableController = async (req: Request, res: Response) => {
             table: "payments",
             data: { id, status: "posted" },
             userId: req.user!.id,
-            msg: `posted receivable #${id}`,
+            msg: `posted receivable ${existing?.reference || id}`,
         });
 
         res.json({ message: "Receivable posted successfully", ...result });
@@ -353,6 +360,15 @@ export const postReceivableController = async (req: Request, res: Response) => {
 export const voidReceivableController = async (req: Request, res: Response) => {
     const { id } = req.params;
     try {
+        const [existing] = await db
+            .select({ date: payments.date, reference: payments.reference })
+            .from(payments)
+            .where(eq(payments.id, id))
+            .limit(1);
+
+        if (!existing) return res.status(404).json({ message: "Receivable not found" });
+        await validatePeriodNotClosed(existing.date, "membatalkan piutang");
+
         const result = await voidPayment(id);
 
         logAction(req, {
@@ -360,13 +376,13 @@ export const voidReceivableController = async (req: Request, res: Response) => {
             table: "payments",
             data: { id, status: "voided" },
             userId: req.user!.id,
-            msg: `voided receivable #${id}`,
+            msg: `voided receivable ${existing.reference || id}`,
         });
 
         res.json({ message: "Receivable voided successfully", ...result });
     } catch (err: any) {
         console.error("Void receivable error:", err);
-        res.status(400).json({
+        res.status(err.statusCode || 400).json({
             message: err.message || "Failed to void receivable",
         });
     }

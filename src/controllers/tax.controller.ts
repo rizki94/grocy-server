@@ -67,7 +67,7 @@ export const createTax = async (req: Request, res: Response) => {
             table: "taxes",
             data: createdTax,
             userId: req.user!.id,
-            msg: `created tax #${createdTax.id}`,
+            msg: `created tax "${createdTax.name}"`,
         });
 
         return res.status(201).json({
@@ -120,7 +120,7 @@ export const updateTax = async (req: Request, res: Response) => {
             oldData: oldTax,
             data: updatedTax,
             userId: req.user!.id,
-            msg: `updated tax #${updatedTax.id}`,
+            msg: `updated tax "${updatedTax.name}"`,
         });
 
         return res.status(200).json({

@@ -15,6 +15,8 @@ import {
     updateBatchSalesItems,
 } from "@/controllers/batch-sales.controller";
 
+import { checkPeriodForTransactionMutation } from "@/helpers/period-closing.helper";
+
 const salesRouter = Router();
 
 salesRouter.get("/", getAllSales);
@@ -23,10 +25,10 @@ salesRouter.post("/batch-analyze", analyzeBatchSales);
 salesRouter.post("/batch-update-items", updateBatchSalesItems);
 salesRouter.get("/posted/:contactId", getPostedSalesByContact);
 salesRouter.get("/:id", getSalesById);
-salesRouter.post("/", createSales);
-salesRouter.put("/:id", updateSales);
-salesRouter.put("/post/:id", postSales);
-salesRouter.post("/:id/cancel", cancelSales);
+salesRouter.post("/", checkPeriodForTransactionMutation, createSales);
+salesRouter.put("/:id", checkPeriodForTransactionMutation, updateSales);
+salesRouter.put("/post/:id", checkPeriodForTransactionMutation, postSales);
+salesRouter.post("/:id/cancel", checkPeriodForTransactionMutation, cancelSales);
 
 
 export default salesRouter;

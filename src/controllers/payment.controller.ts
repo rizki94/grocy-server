@@ -35,6 +35,7 @@ import {
     paymentWithLinesUpdateSchema,
 } from "@/validators/payment.validator";
 import { branchScope, withBranch, resolveBranchId } from "@/helpers/branch.helper";
+import { validatePeriodNotClosed } from "@/helpers/period-closing.helper";
 
 export async function getPaymentById(req: Request, res: Response) {
     const { id } = req.params;
@@ -282,7 +283,7 @@ export const createPaymentController = async (req: Request, res: Response) => {
             table: "payments",
             data: createdPayment,
             userId: req.user!.id,
-            msg: `created payment #${createdPayment.id}`,
+            msg: `created payment ${createdPayment.reference || createdPayment.id}`,
         });
 
         return res.status(201).json(createdPayment);
@@ -312,7 +313,7 @@ export const updatePaymentController = async (req: Request, res: Response) => {
             table: "payments",
             data: updatedPayment,
             userId: req.user!.id,
-            msg: `updated payment #${payment.id}`,
+            msg: `updated payment ${payment.reference || payment.id}`,
         });
 
         res.json({ message: "Payment updated successfully", updatedPayment });
@@ -324,6 +325,12 @@ export const updatePaymentController = async (req: Request, res: Response) => {
 export const postPaymentController = async (req: Request, res: Response) => {
     const { id } = req.params;
     try {
+        const [existing] = await db
+            .select({ reference: payments.reference })
+            .from(payments)
+            .where(eq(payments.id, id))
+            .limit(1);
+
         const result = await postPayment(id);
 
         logAction(req, {
@@ -331,7 +338,7 @@ export const postPaymentController = async (req: Request, res: Response) => {
             table: "payments",
             data: { id, status: "posted" },
             userId: req.user!.id,
-            msg: `posted payment #${id}`,
+            msg: `posted payment ${existing?.reference || id}`,
         });
 
         res.json({ message: "Payment posted successfully", ...result });
@@ -346,6 +353,15 @@ export const postPaymentController = async (req: Request, res: Response) => {
 export const voidPaymentController = async (req: Request, res: Response) => {
     const { id } = req.params;
     try {
+        const [existing] = await db
+            .select({ date: payments.date, reference: payments.reference })
+            .from(payments)
+            .where(eq(payments.id, id))
+            .limit(1);
+
+        if (!existing) return res.status(404).json({ message: "Payment not found" });
+        await validatePeriodNotClosed(existing.date, "membatalkan hutang");
+
         const result = await voidPayment(id);
 
         logAction(req, {
@@ -353,13 +369,13 @@ export const voidPaymentController = async (req: Request, res: Response) => {
             table: "payments",
             data: { id, status: "voided" },
             userId: req.user!.id,
-            msg: `voided payment #${id}`,
+            msg: `voided payment ${existing.reference || id}`,
         });
 
         res.json({ message: "Payment voided successfully", ...result });
     } catch (err: any) {
         console.error("Void payment error:", err);
-        res.status(400).json({
+        res.status(err.statusCode || 400).json({
             message: err.message || "Failed to void payment",
         });
     }

@@ -15,6 +15,7 @@ import { and, asc, desc, eq, gte, like, lte, or, sql } from "drizzle-orm";
 import { PgColumn } from "drizzle-orm/pg-core";
 import { Request, Response } from "express";
 import { branchScope } from "@/helpers/branch.helper";
+import { validatePeriodNotClosed } from "@/helpers/period-closing.helper";
 
 export const getAllJournals = async (req: Request, res: Response) => {
     try {
@@ -55,23 +56,30 @@ export const createJournalController = async (req: Request, res: Response) => {
     }
 
     const data = parsed.data;
-
     try {
+        await validatePeriodNotClosed(data.date, "membuat jurnal");
+
         const createdJournal = await createJournal(data, req.user!, req.activeBranchId ?? req.branchId ?? null);
+        const createRows = await findJournalById(createdJournal.id);
+        const createEntries = createRows.filter((r) => r.entries && r.entries.id).map((r) => r.entries!);
+        const fullCreatedJournal = { ...createdJournal, entries: createEntries };
+
         logAction(req, {
             action: "insert",
             table: "journals",
-            data: createdJournal,
+            data: fullCreatedJournal,
             userId: req.user!.id,
-            msg: `created journal #${createdJournal.id}`,
+            msg: `created journal ${createdJournal.invoice}`,
         });
 
         return res.json({
             message: "Journal created successfully",
-            createdJournal,
+            createdJournal: fullCreatedJournal,
         });
-    } catch {
-        return res.status(500).json({ message: "Failed to create journal" });
+    } catch (error: any) {
+        return res
+            .status(error.statusCode || 500)
+            .json({ message: error.message || "Failed to create journal" });
     }
 };
 
@@ -96,6 +104,9 @@ export const updateJournalController = async (req: Request, res: Response) => {
         if (!oldJournal)
             return res.status(404).json({ message: "Journal not found" });
 
+        await validatePeriodNotClosed(oldJournal.date, "mengubah jurnal");
+        await validatePeriodNotClosed(data.date, "mengubah jurnal");
+
         if (oldJournal.status !== "draft") {
             return res
                 .status(400)
@@ -103,27 +114,45 @@ export const updateJournalController = async (req: Request, res: Response) => {
         }
 
         const updatedJournal = await updateJournal(data);
+        const updateRows = await findJournalById(data.id);
+        const updateEntries = updateRows.filter((r) => r.entries && r.entries.id).map((r) => r.entries!);
+        const fullUpdatedJournal = { ...updatedJournal, entries: updateEntries };
+
         logAction(req, {
             action: "update",
             table: "journals",
             oldData: oldJournal,
-            data: updatedJournal,
+            data: fullUpdatedJournal,
             userId: req.user!.id,
-            msg: `updated journal #${data.id}`,
+            msg: `updated journal ${oldJournal.invoice}`,
         });
 
         return res.json({
-            message: "Payment updated successfully",
-            updatedJournal,
+            message: "Journal updated successfully",
+            updatedJournal: fullUpdatedJournal,
         });
-    } catch {
-        return res.status(500).json({ message: "Failed to update journal" });
+    } catch (error: any) {
+        return res
+            .status(error.statusCode || 500)
+            .json({ message: error.message || "Failed to update journal" });
     }
 };
 
 export const postJournal = async (req: Request, res: Response) => {
     const { id } = req.params;
     try {
+        const [existing] = await db
+            .select()
+            .from(journals)
+            .where(eq(journals.id, id))
+            .limit(1);
+
+        if (!existing) {
+            return res.status(404).json({ message: "Journal not found" });
+        }
+
+        await validatePeriodNotClosed(existing.date, "memposting jurnal");
+
         const [postedJournal] = await db
             .update(journals)
             .set({ status: "posted" })
@@ -135,12 +164,14 @@ export const postJournal = async (req: Request, res: Response) => {
             table: "journals",
             data: postedJournal,
             userId: req.user!.id,
-            msg: `posted journal #${id}`,
+            msg: `posted journal ${existing.invoice}`,
         });
 
         return res.status(200).json(postedJournal);
-    } catch {
-        return res.status(500).json({ message: "Failed to post journal" });
+    } catch (error: any) {
+        return res
+            .status(error.statusCode || 500)
+            .json({ message: error.message || "Failed to post journal" });
     }
 };
 

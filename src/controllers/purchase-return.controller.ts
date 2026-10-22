@@ -9,7 +9,7 @@ import {
     transactions,
 } from "@/db/schemas";
 import { addDays } from "@/helpers/add-days";
-import { generateInvoice } from "@/helpers/generate-invoice";
+import { generateInvoice, generateJournalInvoice } from "@/helpers/generate-invoice";
 import { logAction } from "@/utils/log-helper";
 import { updateStockForTransaction } from "@/repositories/stock.repository";
 import { purchaseById, extractDetails } from "@/repositories/transaction.repository";
@@ -35,7 +35,7 @@ import { Request, Response } from "express";
 import { findGlAccountByCode } from "@/repositories/gl-account.repository";
 import { TransactionType } from "@/constants/transaction.constant";
 import { parseTableQuery } from "@/services/table-query";
-import { branchScope, withBranch, resolveBranchId, resolveBranchCode } from "@/helpers/branch.helper";
+import { branchScope, withBranch, resolveBranchId, resolveBranchCode, resolveBranchCodeFromId } from "@/helpers/branch.helper";
 
 export async function getAllPurchaseReturns(req: Request, res: Response) {
     try {
@@ -132,7 +132,7 @@ export const createPurchaseReturn = async (req: Request, res: Response) => {
                 details: details,
             },
             userId: req.user!.id,
-            msg: `created purchase #${createdPurchase.id}`,
+            msg: `created purchase return ${createdPurchase.invoice}`,
         });
 
         const rows = await purchaseById(createdPurchase.id);
@@ -233,7 +233,7 @@ export const updatePurchaseReturn = async (req: Request, res: Response) => {
                 details: purchase.details,
             },
             userId: req.user!.id,
-            msg: `updated purchase #${updatedPurchase.id}`,
+            msg: `updated purchase return ${updatedPurchase.invoice}`,
         });
 
         return res.status(200).json({
@@ -318,9 +318,12 @@ export const postPurchaseReturn = async (req: Request, res: Response) => {
             const calcAmount = Number(purchase.totalAmount || (netCost + calcTax));
 
             const journalBranchId = await resolveBranchId(purchase.branchId, req);
+            const journalBranchCode = await resolveBranchCodeFromId(journalBranchId);
+            const journalInvoice = await generateJournalInvoice("purchase_return", journalBranchCode);
             const [journal] = await tx
                 .insert(journals)
                 .values({
+                    invoice: journalInvoice,
                     transactionId: purchase.id,
                     branchId: journalBranchId,
                     date: purchase.date,
@@ -390,7 +393,7 @@ export const postPurchaseReturn = async (req: Request, res: Response) => {
                 table: "transactions",
                 data: purchase,
                 userId: req.user!.id,
-                msg: `posted purchase return #${purchase.id}`,
+                msg: `posted purchase return ${purchase.invoice}`,
             });
 
             return res.status(200).json({
@@ -602,9 +605,12 @@ export const cancelPurchaseReturn = async (req: Request, res: Response) => {
 
                 // 5. Create Reversal Journal
                 const reversalBranchId = await resolveBranchId(reversal.branchId || original.branchId, req);
+                const reversalBranchCode = await resolveBranchCodeFromId(reversalBranchId);
+                const reversalJournalInvoice = await generateJournalInvoice("purchase_return", reversalBranchCode);
                 const [journal] = await tx
                     .insert(journals)
                     .values({
+                        invoice: reversalJournalInvoice,
                         transactionId: reversal.id,
                         branchId: reversalBranchId,
                         date: reversal.date,
@@ -661,7 +667,7 @@ export const cancelPurchaseReturn = async (req: Request, res: Response) => {
                 table: "transactions",
                 data: reversal,
                 userId: req.user!.id,
-                msg: `voided purchase return #${original.invoice}`,
+                msg: `voided purchase return ${original.invoice}`,
             });
 
             return res.status(200).json({

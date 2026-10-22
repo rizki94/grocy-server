@@ -10,7 +10,7 @@ import {
     transactions,
     warehouses,
 } from "@/db/schemas";
-import { and, asc, desc, eq, inArray, like, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, like, or, sql, gte, lte } from "drizzle-orm";
 import { PgColumn } from "drizzle-orm/pg-core";
 import { Request, Response } from "express";
 import { branchScope, productBranchFilter } from "@/helpers/branch.helper";
@@ -155,9 +155,37 @@ export const getMovementStocks = async (req: Request, res: Response) => {
 
     const sortColumn = sortColumns[sortKey] ?? transactions.date;
 
-    const branchCondition = branchScope(warehouses.branchId, req);
-    const prodCondition = productBranchFilter(products, req);
-    const filterCondition = and(branchCondition, prodCondition);
+    const productId = (query.productId || query.product) as string | undefined;
+    const warehouseId = (query.warehouseId || query.warehouse) as string | undefined;
+    const contactId = (query.contactId || query.contact) as string | undefined;
+    const from = (query.from || query.startDate) as string | undefined;
+    const to = (query.to || query.endDate) as string | undefined;
+
+    const fromDate = from ? (from.includes("T") ? from.split("T")[0] : from) : undefined;
+    const toDate = to ? (to.includes("T") ? to.split("T")[0] : to) : undefined;
+
+    const conditions = [
+        branchScope(warehouses.branchId, req),
+        productBranchFilter(products, req),
+    ];
+
+    if (productId && productId !== "all") {
+        conditions.push(eq(stocks.productId, productId));
+    }
+    if (warehouseId && warehouseId !== "all") {
+        conditions.push(eq(stocks.warehouseId, warehouseId));
+    }
+    if (contactId && contactId !== "all") {
+        conditions.push(eq(transactions.contactId, contactId));
+    }
+    if (fromDate) {
+        conditions.push(gte(transactions.date, fromDate));
+    }
+    if (toDate) {
+        conditions.push(lte(transactions.date, toDate));
+    }
+
+    const filterCondition = and(...conditions);
 
     try {
         const [stockMovementList, [totalCount]] = await Promise.all([
@@ -204,6 +232,11 @@ export const getMovementStocks = async (req: Request, res: Response) => {
                 .innerJoin(stocks, eq(stocks.id, stockMovements.stockId))
                 .leftJoin(warehouses, eq(warehouses.id, stocks.warehouseId))
                 .innerJoin(products, eq(stocks.productId, products.id))
+                .innerJoin(
+                    transactions,
+                    eq(transactions.id, stockMovements.transactionId),
+                )
+                .leftJoin(contacts, eq(contacts.id, transactions.contactId))
                 .where(filterCondition),
         ]);
 

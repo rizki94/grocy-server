@@ -85,7 +85,7 @@ export const createProductUnit = async (req: Request, res: Response) => {
             table: "product_units",
             data: createdUnit,
             userId: req.user!.id,
-            msg: `created unit #${createdUnit.id}`,
+            msg: `created unit "${createdUnit.name}"`,
         });
     } catch (error) {
         console.error("error creating unit:", error);
@@ -136,7 +136,7 @@ export const updateProductUnit = async (req: Request, res: Response) => {
             oldData: oldProductUnit,
             data: updatedProductUnit,
             userId: req.user!.id,
-            msg: `updated unit #${updatedProductUnit.id}`,
+            msg: `updated unit "${updatedProductUnit.name}"`,
         });
 
         return res.status(200).json({

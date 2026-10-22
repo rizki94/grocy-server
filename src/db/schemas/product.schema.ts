@@ -1,4 +1,5 @@
 import { decimalAsNumber } from "@/types/decimal-as-number";
+import { relations } from "drizzle-orm";
 import {
     boolean,
     integer,
@@ -92,3 +93,18 @@ export const productDetailPrices = pgTable(
     },
     (t) => [unique().on(t.productDetailId, t.priceGroupId, t.branchId)],
 );
+
+export const productsRelations = relations(products, ({ many }) => ({
+    details: many(productDetails),
+}));
+
+export const productDetailsRelations = relations(productDetails, ({ one }) => ({
+    product: one(products, {
+        fields: [productDetails.productId],
+        references: [products.id],
+    }),
+    unit: one(productUnits, {
+        fields: [productDetails.unitId],
+        references: [productUnits.id],
+    }),
+}));

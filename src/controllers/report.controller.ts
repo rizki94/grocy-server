@@ -6,15 +6,22 @@ import {
     journalEntries,
     journals,
     openInvoices,
+    periodClosings,
     products,
+    settings,
     stockMovements,
     stocks,
     transactionDetails,
     transactions,
     users,
     warehouses,
+    expenses,
+    incomes,
+    stockOpnames,
+    payments,
+    branches,
 } from "@/db/schemas";
-import { and, eq, sql, gte, lte, desc, inArray, asc } from "drizzle-orm";
+import { and, eq, sql, gte, lte, desc, inArray, asc, ilike, or } from "drizzle-orm";
 import { branchScope } from "@/helpers/branch.helper";
 
 export const getProfitLoss = async (req: Request, res: Response) => {
@@ -30,6 +37,20 @@ export const getProfitLoss = async (req: Request, res: Response) => {
             : new Date().toISOString().split("T")[0];
 
         const scope = branchScope(journals.branchId, req);
+
+        const globalSettings = await db.query.settings.findFirst({
+            where: eq(settings.id, "global"),
+        });
+
+        const closingDate = globalSettings?.closingDate || null;
+        let periodStatus: "closed" | "open" | "partial" = "open";
+        if (closingDate) {
+            if (toDate <= closingDate) {
+                periodStatus = "closed";
+            } else if (fromDate <= closingDate && toDate > closingDate) {
+                periodStatus = "partial";
+            }
+        }
 
         const report = await db
             .select({
@@ -52,6 +73,7 @@ export const getProfitLoss = async (req: Request, res: Response) => {
                     gte(journals.date, fromDate),
                     lte(journals.date, toDate),
                     inArray(glAccounts.type, ["income", "expense"]),
+                    sql`${journals.id} NOT IN (SELECT closing_journal_id FROM period_closings WHERE closing_journal_id IS NOT NULL AND status = 'closed')`,
                     scope,
                 ),
             )
@@ -85,6 +107,8 @@ export const getProfitLoss = async (req: Request, res: Response) => {
             totalIncome,
             totalExpense,
             netProfit,
+            closingDate,
+            periodStatus,
         });
     } catch (error: any) {
         console.error("Profit Loss Error:", error);
@@ -190,6 +214,10 @@ export const getBalanceSheet = async (req: Request, res: Response) => {
         const discrepancy = totalAsset - (totalLiability + totalEquity);
         const isBalanced = Math.abs(discrepancy) < 0.01;
 
+        const globalSettings = await db.query.settings.findFirst({
+            where: eq(settings.id, "global"),
+        });
+
         res.json({
             asOfDate: toDate,
             branchId: req.activeBranchId || (req.user as any)?.branchId || null,
@@ -202,6 +230,8 @@ export const getBalanceSheet = async (req: Request, res: Response) => {
             totalEquity,
             isBalanced,
             discrepancy,
+            lastClosingDate: globalSettings?.closingDate || null,
+            retainedEarningsAccountId: globalSettings?.retainedEarningsGlAccountId || null,
         });
     } catch (error: any) {
         console.error("Balance Sheet Error:", error);
@@ -214,7 +244,7 @@ export const getBalanceSheet = async (req: Request, res: Response) => {
 
 export const getProductProfitability = async (req: Request, res: Response) => {
     try {
-        const { from, to } = req.query;
+        const { from, to, search } = req.query;
         const fromDate = from
             ? (from as string).split("T")[0]
             : new Date(new Date().getFullYear(), 0, 1)
@@ -225,6 +255,9 @@ export const getProductProfitability = async (req: Request, res: Response) => {
             : new Date().toISOString().split("T")[0];
 
         const scope = branchScope(transactions.branchId, req);
+        const searchCondition = search
+            ? ilike(products.name, `%${search}%`)
+            : undefined;
 
         const report = await db
             .select({
@@ -248,6 +281,7 @@ export const getProductProfitability = async (req: Request, res: Response) => {
                     inArray(transactions.status, ["posted", "paid"]),
                     gte(transactions.date, fromDate),
                     lte(transactions.date, toDate),
+                    searchCondition,
                     scope,
                 ),
             )
@@ -616,5 +650,419 @@ export const getPivotData = async (req: Request, res: Response) => {
             message: "Failed to fetch pivot data",
             error: error.message,
         });
+    }
+};
+
+/* ─────────────────── GET /reports/transaction-summary ─────────────────── */
+
+export const getTransactionSummary = async (req: Request, res: Response) => {
+    try {
+        const {
+            type = "sales",
+            from,
+            to,
+            status,
+            contactId,
+            userId,
+            search = "",
+        } = req.query as Record<string, string>;
+
+        const fromDate = from ? (from as string).split("T")[0] : undefined;
+        const toDate = to ? (to as string).split("T")[0] : undefined;
+
+        let rows: Array<{
+            id: string;
+            date: string;
+            code: string;
+            reference?: string | null;
+            note?: string | null;
+            status: string;
+            contactId?: string | null;
+            contactName?: string | null;
+            userId?: string | null;
+            userName?: string | null;
+            branchName?: string | null;
+            warehouseName?: string | null;
+            subtotal?: number;
+            discount?: number;
+            tax?: number;
+            amount: number;
+            paidAmount?: number;
+            remainingAmount?: number;
+        }> = [];
+
+        // 1. Core transactions (sales, purchase, sales_return, purchase_return, transfer_stock, adjustment)
+        if (
+            [
+                "sales",
+                "purchase",
+                "sales_return",
+                "purchase_return",
+                "transfer_stock",
+                "adjustment",
+            ].includes(type)
+        ) {
+            const scope = branchScope(transactions.branchId, req);
+            const conditions = [
+                eq(transactions.type, type as any),
+                scope,
+                status ? eq(transactions.status, status as any) : undefined,
+                fromDate ? gte(transactions.date, fromDate) : undefined,
+                toDate ? lte(transactions.date, toDate) : undefined,
+                contactId ? eq(transactions.contactId, contactId) : undefined,
+                userId ? eq(transactions.userId, userId) : undefined,
+                search
+                    ? or(
+                          ilike(transactions.invoice, `%${search}%`),
+                          ilike(contacts.name, `%${search}%`),
+                          ilike(transactions.reference, `%${search}%`),
+                      )
+                    : undefined,
+            ];
+
+            const raw = await db
+                .select({
+                    id: transactions.id,
+                    date: transactions.date,
+                    code: transactions.invoice,
+                    reference: transactions.reference,
+                    note: transactions.note,
+                    status: transactions.status,
+                    contactId: transactions.contactId,
+                    contactName: contacts.name,
+                    userId: transactions.userId,
+                    userName: users.displayName,
+                    usernameFallback: users.username,
+                    branchName: branches.name,
+                    subtotal: transactions.subtotal,
+                    discount: transactions.totalDiscount,
+                    tax: transactions.totalTax,
+                    amount: transactions.totalAmount,
+                })
+                .from(transactions)
+                .leftJoin(contacts, eq(transactions.contactId, contacts.id))
+                .leftJoin(users, eq(transactions.userId, users.id))
+                .leftJoin(branches, eq(transactions.branchId, branches.id))
+                .where(and(...conditions))
+                .orderBy(desc(transactions.date), desc(transactions.createdAt));
+
+            rows = raw.map((r) => ({
+                id: r.id,
+                date: String(r.date),
+                code: r.code,
+                reference: r.reference,
+                note: r.note,
+                status: r.status,
+                contactId: r.contactId,
+                contactName: r.contactName || "-",
+                userId: r.userId,
+                userName: r.userName || r.usernameFallback || "-",
+                branchName: r.branchName || "-",
+                subtotal: Number(r.subtotal || 0),
+                discount: Number(r.discount || 0),
+                tax: Number(r.tax || 0),
+                amount: Number(r.amount || 0),
+            }));
+        }
+        // 2. Expenses
+        else if (type === "expense") {
+            const scope = branchScope(expenses.branchId, req);
+            const conditions = [
+                scope,
+                status ? eq(expenses.status, status) : undefined,
+                fromDate ? gte(expenses.date, fromDate) : undefined,
+                toDate ? lte(expenses.date, toDate) : undefined,
+                userId ? eq(expenses.userId, userId) : undefined,
+                search
+                    ? or(
+                          ilike(expenses.code, `%${search}%`),
+                          ilike(expenses.description, `%${search}%`),
+                          ilike(expenses.reference, `%${search}%`),
+                      )
+                    : undefined,
+            ];
+
+            const raw = await db
+                .select({
+                    id: expenses.id,
+                    date: expenses.date,
+                    code: expenses.code,
+                    reference: expenses.reference,
+                    note: expenses.description,
+                    status: expenses.status,
+                    userId: expenses.userId,
+                    userName: users.displayName,
+                    usernameFallback: users.username,
+                    branchName: branches.name,
+                    amount: expenses.totalAmount,
+                })
+                .from(expenses)
+                .leftJoin(users, eq(expenses.userId, users.id))
+                .leftJoin(branches, eq(expenses.branchId, branches.id))
+                .where(and(...conditions))
+                .orderBy(desc(expenses.date), desc(expenses.createdAt));
+
+            rows = raw.map((r) => ({
+                id: r.id,
+                date: String(r.date),
+                code: r.code,
+                reference: r.reference,
+                note: r.note,
+                status: r.status,
+                userId: r.userId,
+                userName: r.userName || r.usernameFallback || "-",
+                branchName: r.branchName || "-",
+                amount: Number(r.amount || 0),
+            }));
+        }
+        // 3. Incomes
+        else if (type === "income") {
+            const scope = branchScope(incomes.branchId, req);
+            const conditions = [
+                scope,
+                status ? eq(incomes.status, status) : undefined,
+                fromDate ? gte(incomes.date, fromDate) : undefined,
+                toDate ? lte(incomes.date, toDate) : undefined,
+                userId ? eq(incomes.userId, userId) : undefined,
+                search
+                    ? or(
+                          ilike(incomes.code, `%${search}%`),
+                          ilike(incomes.description, `%${search}%`),
+                          ilike(incomes.reference, `%${search}%`),
+                      )
+                    : undefined,
+            ];
+
+            const raw = await db
+                .select({
+                    id: incomes.id,
+                    date: incomes.date,
+                    code: incomes.code,
+                    reference: incomes.reference,
+                    note: incomes.description,
+                    status: incomes.status,
+                    userId: incomes.userId,
+                    userName: users.displayName,
+                    usernameFallback: users.username,
+                    branchName: branches.name,
+                    amount: incomes.totalAmount,
+                })
+                .from(incomes)
+                .leftJoin(users, eq(incomes.userId, users.id))
+                .leftJoin(branches, eq(incomes.branchId, branches.id))
+                .where(and(...conditions))
+                .orderBy(desc(incomes.date), desc(incomes.createdAt));
+
+            rows = raw.map((r) => ({
+                id: r.id,
+                date: String(r.date),
+                code: r.code,
+                reference: r.reference,
+                note: r.note,
+                status: r.status,
+                userId: r.userId,
+                userName: r.userName || r.usernameFallback || "-",
+                branchName: r.branchName || "-",
+                amount: Number(r.amount || 0),
+            }));
+        }
+        // 4. Receivables / Payables (Open Invoices & Aging)
+        else if (type === "receivable" || type === "payable") {
+            const scope = branchScope(openInvoices.branchId, req);
+            const conditions = [
+                eq(openInvoices.type, type),
+                scope,
+                status ? eq(openInvoices.status, status as any) : undefined,
+                fromDate ? gte(openInvoices.dueDate, fromDate) : undefined,
+                toDate ? lte(openInvoices.dueDate, toDate) : undefined,
+                contactId ? eq(openInvoices.contactId, contactId) : undefined,
+                search
+                    ? or(
+                          ilike(transactions.invoice, `%${search}%`),
+                          ilike(contacts.name, `%${search}%`),
+                      )
+                    : undefined,
+            ];
+
+            const raw = await db
+                .select({
+                    id: openInvoices.id,
+                    date: openInvoices.dueDate,
+                    code: transactions.invoice,
+                    reference: transactions.reference,
+                    note: transactions.note,
+                    status: openInvoices.status,
+                    contactId: openInvoices.contactId,
+                    contactName: contacts.name,
+                    branchName: branches.name,
+                    amount: openInvoices.amount,
+                    paidAmount: openInvoices.paidAmount,
+                })
+                .from(openInvoices)
+                .leftJoin(transactions, eq(openInvoices.transactionId, transactions.id))
+                .leftJoin(contacts, eq(openInvoices.contactId, contacts.id))
+                .leftJoin(branches, eq(openInvoices.branchId, branches.id))
+                .where(and(...conditions))
+                .orderBy(asc(openInvoices.dueDate));
+
+            rows = raw.map((r) => {
+                const amt = Number(r.amount || 0);
+                const paid = Number(r.paidAmount || 0);
+                return {
+                    id: r.id,
+                    date: String(r.date),
+                    code: r.code || "-",
+                    reference: r.reference,
+                    note: r.note,
+                    status: r.status,
+                    contactId: r.contactId,
+                    contactName: r.contactName || "-",
+                    branchName: r.branchName || "-",
+                    amount: amt,
+                    paidAmount: paid,
+                    remainingAmount: amt - paid,
+                };
+            });
+        }
+        // 5. Journals
+        else if (type === "journal") {
+            const scope = branchScope(journals.branchId, req);
+            const conditions = [
+                scope,
+                status ? eq(journals.status, status as any) : undefined,
+                fromDate ? gte(journals.date, fromDate) : undefined,
+                toDate ? lte(journals.date, toDate) : undefined,
+                search
+                    ? or(
+                          ilike(journals.invoice, `%${search}%`),
+                          ilike(journals.description, `%${search}%`),
+                      )
+                    : undefined,
+            ];
+
+            const raw = await db
+                .select({
+                    id: journals.id,
+                    date: journals.date,
+                    code: journals.invoice,
+                    note: journals.description,
+                    status: journals.status,
+                    branchName: branches.name,
+                    totalDebit: sql<number>`coalesce(sum(${journalEntries.debit}), 0)`,
+                })
+                .from(journals)
+                .leftJoin(journalEntries, eq(journals.id, journalEntries.journalId))
+                .leftJoin(branches, eq(journals.branchId, branches.id))
+                .where(and(...conditions))
+                .groupBy(journals.id, branches.name)
+                .orderBy(desc(journals.date), desc(journals.createdAt));
+
+            rows = raw.map((r) => ({
+                id: r.id,
+                date: String(r.date),
+                code: r.code,
+                note: r.note,
+                status: r.status,
+                branchName: r.branchName || "-",
+                amount: Number(r.totalDebit || 0),
+            }));
+        }
+        // 6. Stock Opnames
+        else if (type === "stock_opname") {
+            const scope = branchScope(stockOpnames.branchId, req);
+            const conditions = [
+                scope,
+                status ? eq(stockOpnames.status, status as any) : undefined,
+                fromDate ? gte(stockOpnames.countDate, fromDate) : undefined,
+                toDate ? lte(stockOpnames.countDate, toDate) : undefined,
+                search
+                    ? or(
+                          ilike(stockOpnames.code, `%${search}%`),
+                          ilike(stockOpnames.name, `%${search}%`),
+                      )
+                    : undefined,
+            ];
+
+            const raw = await db
+                .select({
+                    id: stockOpnames.id,
+                    date: stockOpnames.countDate,
+                    code: stockOpnames.code,
+                    note: stockOpnames.note,
+                    status: stockOpnames.status,
+                    warehouseName: warehouses.name,
+                    userName: users.displayName,
+                    usernameFallback: users.username,
+                    branchName: branches.name,
+                })
+                .from(stockOpnames)
+                .leftJoin(warehouses, eq(stockOpnames.warehouseId, warehouses.id))
+                .leftJoin(users, eq(stockOpnames.createdBy, users.id))
+                .leftJoin(branches, eq(stockOpnames.branchId, branches.id))
+                .where(and(...conditions))
+                .orderBy(desc(stockOpnames.countDate), desc(stockOpnames.createdAt));
+
+            rows = raw.map((r) => ({
+                id: r.id,
+                date: String(r.date),
+                code: r.code,
+                note: r.note,
+                status: r.status,
+                warehouseName: r.warehouseName || "Semua Gudang",
+                userName: r.userName || r.usernameFallback || "-",
+                branchName: r.branchName || "-",
+                amount: 0,
+            }));
+        }
+
+        // Summary Aggregations
+        const totalCount = rows.length;
+        const totalAmount = rows.reduce((s, r) => s + (r.amount || 0), 0);
+        const totalSubtotal = rows.reduce((s, r) => s + (r.subtotal || 0), 0);
+        const totalDiscount = rows.reduce((s, r) => s + (r.discount || 0), 0);
+        const totalTax = rows.reduce((s, r) => s + (r.tax || 0), 0);
+        const totalPaid = rows.reduce((s, r) => s + (r.paidAmount || 0), 0);
+        const totalRemaining = rows.reduce((s, r) => s + (r.remainingAmount || 0), 0);
+
+        // Grouped By Contact
+        const contactMap = new Map<string, { contactName: string; count: number; totalAmount: number }>();
+        rows.forEach((r) => {
+            const name = r.contactName || "Lainnya / Umum";
+            const existing = contactMap.get(name) || { contactName: name, count: 0, totalAmount: 0 };
+            existing.count += 1;
+            existing.totalAmount += r.amount;
+            contactMap.set(name, existing);
+        });
+        const groupedByContact = Array.from(contactMap.values()).sort((a, b) => b.totalAmount - a.totalAmount);
+
+        // Grouped By User
+        const userMap = new Map<string, { userName: string; count: number; totalAmount: number }>();
+        rows.forEach((r) => {
+            const name = r.userName || "Sistem";
+            const existing = userMap.get(name) || { userName: name, count: 0, totalAmount: 0 };
+            existing.count += 1;
+            existing.totalAmount += r.amount;
+            userMap.set(name, existing);
+        });
+        const groupedByUser = Array.from(userMap.values()).sort((a, b) => b.totalAmount - a.totalAmount);
+
+        return res.json({
+            type,
+            summary: {
+                totalCount,
+                totalAmount,
+                totalSubtotal,
+                totalDiscount,
+                totalTax,
+                totalPaid,
+                totalRemaining,
+            },
+            groupedByContact,
+            groupedByUser,
+            rows,
+        });
+    } catch (err: any) {
+        console.error("[getTransactionSummary]", err);
+        return res.status(500).json({ message: "Failed to generate transaction summary", error: err.message });
     }
 };

@@ -124,6 +124,11 @@ export async function seedAccounts(dbInstance: typeof db) {
         { code: "transaction.transfer_stock.post", description: "Post Transfer Stock", group: "transaction" },
         { code: "transaction.adjustment.create", description: "Create Adjustment", group: "transaction" },
         { code: "transaction.adjustment.post", description: "Post Adjustment", group: "transaction" },
+        { code: "transaction.stock_opname.view", description: "View Stock Opname", group: "transaction" },
+        { code: "transaction.stock_opname.create", description: "Create Stock Opname", group: "transaction" },
+        { code: "transaction.stock_opname.update", description: "Update Stock Opname", group: "transaction" },
+        { code: "transaction.stock_opname.complete", description: "Complete Stock Opname", group: "transaction" },
+        { code: "transaction.stock_opname.cancel", description: "Cancel Stock Opname", group: "transaction" },
 
         // Accounting
         { code: "accounting.gl.view", description: "View GL Accounts", group: "accounting" },
@@ -138,6 +143,10 @@ export async function seedAccounts(dbInstance: typeof db) {
         { code: "accounting.payment.view", description: "View Payments", group: "accounting" },
         { code: "accounting.payment.create", description: "Create Payment", group: "accounting" },
         { code: "accounting.payment.post", description: "Post Payment", group: "accounting" },
+        { code: "accounting.bank_reconciliation.view", description: "View Bank Reconciliation", group: "accounting" },
+        { code: "accounting.bank_reconciliation.create", description: "Create Bank Reconciliation", group: "accounting" },
+        { code: "accounting.bank_reconciliation.reconcile", description: "Reconcile Bank Statements", group: "accounting" },
+        { code: "accounting.bank_reconciliation.cancel", description: "Cancel Bank Reconciliation", group: "accounting" },
 
         // Reports
         { code: "report.profit_loss.view", description: "View Profit & Loss", group: "report" },
@@ -145,6 +154,7 @@ export async function seedAccounts(dbInstance: typeof db) {
         { code: "report.product_profitability.view", description: "View Product Profitability", group: "report" },
         { code: "report.gl_balance.view", description: "View GL Balances", group: "report" },
         { code: "report.customer_outstanding.view", description: "View Customer Outstanding AR", group: "report" },
+        { code: "report.transaction_summary.view", description: "View Transaction Summary Report", group: "report" },
 
         // Settings
         { code: "settings.role.view", description: "View Roles", group: "settings" },

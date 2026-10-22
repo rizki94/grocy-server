@@ -17,13 +17,13 @@ import {
     productDetails,
     settings,
 } from "@/db/schemas";
-import { generateInvoice } from "@/helpers/generate-invoice";
+import { generateInvoice, generateJournalInvoice } from "@/helpers/generate-invoice";
 import { updateStockForTransaction } from "@/repositories/stock.repository";
 import { Request, Response } from "express";
 import { eq, and, ilike, or } from "drizzle-orm";
 import { logAction } from "@/utils/log-helper";
 import { findGlAccountByCode } from "@/repositories/gl-account.repository";
-import { resolveBranchId, resolveBranchCode } from "@/helpers/branch.helper";
+import { resolveBranchId, resolveBranchCode, resolveBranchCodeFromId } from "@/helpers/branch.helper";
 
 export async function checkout(req: Request, res: Response) {
     const {
@@ -189,9 +189,12 @@ export async function checkout(req: Request, res: Response) {
                 );
 
             const salesJournalBranchId = await resolveBranchId(transaction.branchId, req);
+            const salesJournalBranchCode = await resolveBranchCodeFromId(salesJournalBranchId);
+            const salesJournalInvoice = await generateJournalInvoice("pos", salesJournalBranchCode);
             const [salesJournal] = await tx
                 .insert(journals)
                 .values({
+                    invoice: salesJournalInvoice,
                     transactionId: transaction.id,
                     branchId: salesJournalBranchId,
                     date: transaction.date,
@@ -351,9 +354,12 @@ export async function checkout(req: Request, res: Response) {
 
                     // Create Payment Journal
                     const paymentJournalBranchId = await resolveBranchId(transaction.branchId, req);
+                    const paymentJournalBranchCode = await resolveBranchCodeFromId(paymentJournalBranchId);
+                    const paymentJournalInvoice = await generateJournalInvoice("ar_payment", paymentJournalBranchCode);
                     const [paymentJournal] = await tx
                         .insert(journals)
                         .values({
+                            invoice: paymentJournalInvoice,
                             transactionId: transaction.id,
                             branchId: paymentJournalBranchId,
                             date: payment.date,

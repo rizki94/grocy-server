@@ -9,7 +9,7 @@ import {
     transactions,
 } from "@/db/schemas";
 import { addDays } from "@/helpers/add-days";
-import { generateInvoice } from "@/helpers/generate-invoice";
+import { generateInvoice, generateJournalInvoice } from "@/helpers/generate-invoice";
 import { logAction } from "@/utils/log-helper";
 import { updateStockForTransaction } from "@/repositories/stock.repository";
 import { purchaseById, extractDetails } from "@/repositories/transaction.repository";
@@ -34,7 +34,7 @@ import { PgColumn } from "drizzle-orm/pg-core";
 import { Request, Response } from "express";
 import { findGlAccountByCode } from "@/repositories/gl-account.repository";
 import { parseTableQuery } from "@/services/table-query";
-import { branchScope, withBranch, resolveBranchId, resolveBranchCode } from "@/helpers/branch.helper";
+import { branchScope, withBranch, resolveBranchId, resolveBranchCode, resolveBranchCodeFromId } from "@/helpers/branch.helper";
 
 export async function getAllSalesReturns(req: Request, res: Response) {
     try {
@@ -131,7 +131,7 @@ export const createSalesReturn = async (req: Request, res: Response) => {
                 details: details,
             },
             userId: req.user!.id,
-            msg: `created sales #${createdSales.id}`,
+            msg: `created sales return ${createdSales.invoice}`,
         });
 
         const rows = await purchaseById(createdSales.id);
@@ -232,7 +232,7 @@ export const updateSalesReturn = async (req: Request, res: Response) => {
                 details: sales.details,
             },
             userId: req.user!.id,
-            msg: `updated sales #${updatedSales.id}`,
+            msg: `updated sales return ${updatedSales.invoice}`,
         });
 
         return res.status(200).json({
@@ -317,9 +317,12 @@ export const postSalesReturn = async (req: Request, res: Response) => {
             const calcAmount = Number(sales.totalAmount || (netRevenue + calcTax));
 
             const journalBranchId = await resolveBranchId(sales.branchId, req);
+            const journalBranchCode = await resolveBranchCodeFromId(journalBranchId);
+            const journalInvoice = await generateJournalInvoice("sales_return", journalBranchCode);
             const [journal] = await tx
                 .insert(journals)
                 .values({
+                    invoice: journalInvoice,
                     transactionId: sales.id,
                     branchId: journalBranchId,
                     date: sales.date,
@@ -418,7 +421,7 @@ export const postSalesReturn = async (req: Request, res: Response) => {
                 table: "transactions",
                 data: sales,
                 userId: req.user!.id,
-                msg: `posted sales return #${sales.id}`,
+                msg: `posted sales return ${sales.invoice}`,
             });
 
             return res.status(200).json({
@@ -623,9 +626,12 @@ export const cancelSalesReturn = async (req: Request, res: Response) => {
 
                 // 5. Create Reversal Journal
                 const reversalBranchId = await resolveBranchId(reversal.branchId || original.branchId, req);
+                const reversalBranchCode = await resolveBranchCodeFromId(reversalBranchId);
+                const reversalJournalInvoice = await generateJournalInvoice("sales_return", reversalBranchCode);
                 const [journal] = await tx
                     .insert(journals)
                     .values({
+                        invoice: reversalJournalInvoice,
                         transactionId: reversal.id,
                         branchId: reversalBranchId,
                         date: reversal.date,
@@ -680,7 +686,7 @@ export const cancelSalesReturn = async (req: Request, res: Response) => {
                 table: "transactions",
                 data: reversal,
                 userId: req.user!.id,
-                msg: `voided sales return #${original.invoice}`,
+                msg: `voided sales return ${original.invoice}`,
             });
 
             return res.status(200).json({

@@ -129,7 +129,7 @@ export const createSupplier = async (req: Request, res: Response) => {
             table: "contacts",
             data: transformedSupplier,
             userId: req.user!.id,
-            msg: `created supplier #${createdSupplier.id}`,
+            msg: `created supplier "${createdSupplier.name}"`,
         });
 
         return res.status(201).json({
@@ -196,7 +196,7 @@ export const updateSupplier = async (req: Request, res: Response) => {
             oldData: oldSupplier,
             data: transformedSupplier,
             userId: req.user!.id,
-            msg: `updated supplier #${updatedSupplier.id}`,
+            msg: `updated supplier "${updatedSupplier.name}"`,
         });
 
         return res.status(200).json({

@@ -3,6 +3,7 @@ import { isAuthenticated } from "./middleware/auth";
 import authRouter from "./routes/auth.route";
 import logsRouter from "./routes/log.route";
 import customerRouter from "./routes/customer.route";
+import contactRouter from "./routes/contact.route";
 import productRouter from "./routes/product.route";
 import purchaseRouter from "./routes/purchase.route";
 import supplierRouter from "./routes/supplier.route";
@@ -44,6 +45,10 @@ import bridgeImportRouter from "./routes/bridge-import.route";
 import pickingListRouter from "./routes/picking-list.route";
 import { branchRoute } from "./routes/branch.route";
 import expenseRouter from "./routes/expense.route";
+import incomeRouter from "./routes/income.route";
+import periodClosingRouter from "./routes/period-closing.route";
+import stockOpnameRouter from "./routes/stock-opname.route";
+import bankReconciliationRouter from "./routes/bank-reconciliation.route";
 
 import { refresh } from "./controllers/auth.controller";
 
@@ -70,6 +75,7 @@ route.use("/roles", roleRouter);
 route.use("/permissions", permissionRouter);
 route.use("/customers", customerRouter);
 route.use("/suppliers", supplierRouter);
+route.use("/contacts", contactRouter);
 route.use("/products", productRouter);
 route.use("/product-units", productUnitRouter);
 route.use("/product-attributes", productAttributeRouter);
@@ -101,5 +107,7 @@ route.use("/settings", settingRouter);
 route.use("/picking-list", pickingListRouter);
 route.use("/branches", branchRoute);
 route.use("/expenses", expenseRouter);
-
-
+route.use("/incomes", incomeRouter);
+route.use("/period-closing", periodClosingRouter);
+route.use("/stock-opnames", stockOpnameRouter);
+route.use("/bank-reconciliations", bankReconciliationRouter);

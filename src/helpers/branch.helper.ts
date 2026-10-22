@@ -36,11 +36,10 @@ export async function resolveBranchId(
 }
 
 /**
- * Resolves the branch code string for invoice prefixing.
- * Returns up to 3 uppercase chars from the active branch's code, or null.
+ * Resolves the branch code string from a branch ID.
+ * Returns up to 3 uppercase chars from the branch's code, or null.
  */
-export async function resolveBranchCode(req: Request): Promise<string | null> {
-    const branchId = req.activeBranchId || (req.user as any)?.branchId;
+export async function resolveBranchCodeFromId(branchId?: string | null): Promise<string | null> {
     if (!branchId) return null;
     const [branch] = await db
         .select({ code: branches.code })
@@ -49,6 +48,15 @@ export async function resolveBranchCode(req: Request): Promise<string | null> {
         .limit(1);
     if (!branch?.code) return null;
     return branch.code.trim().toUpperCase().slice(0, 3);
+}
+
+/**
+ * Resolves the branch code string for invoice prefixing from a request.
+ * Returns up to 3 uppercase chars from the active branch's code, or null.
+ */
+export async function resolveBranchCode(req: Request): Promise<string | null> {
+    const branchId = req.activeBranchId || (req.user as any)?.branchId;
+    return resolveBranchCodeFromId(branchId);
 }
 
 

@@ -1,6 +1,7 @@
 import z from "zod";
 
 export const journalInsertSchema = z.object({
+    invoice: z.string().optional(),
     date: z.string(),
     description: z.string(),
     status: z.enum(["draft", "posted", "cancelled"]).default("draft"),

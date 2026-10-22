@@ -82,7 +82,7 @@ export const createPriceGroup = async (req: Request, res: Response) => {
             table: "price_groups",
             data: createdGroup,
             userId: req.user!.id,
-            msg: `created price group #${createdGroup.id}`,
+            msg: `created price group "${createdGroup.name}"`,
         });
 
         return res.status(201).json({
@@ -135,7 +135,7 @@ export const updatePriceGroup = async (req: Request, res: Response) => {
             oldData: oldGroup,
             data: updatedGroup,
             userId: req.user!.id,
-            msg: `updated price group #${updatedGroup.id}`,
+            msg: `updated price group "${updatedGroup.name}"`,
         });
 
         return res.status(200).json({

@@ -10,6 +10,9 @@ export const findAllJournals = async () => {
     return await db.select().from(journals).orderBy(desc(journals.createdAt));
 };
 
+import { generateJournalInvoice } from "@/helpers/generate-invoice";
+import { resolveBranchCodeFromId } from "@/helpers/branch.helper";
+
 export const findJournalById = async (id: string) => {
     return await db
         .select({
@@ -26,10 +29,14 @@ export async function createJournal(
     user: Express.User,
     branchId?: string | null,
 ) {
+    const branchCode = await resolveBranchCodeFromId(branchId);
+    const invoice = data.invoice || (await generateJournalInvoice("general", branchCode));
+
     return await db.transaction(async (tx) => {
         const [journal] = await tx
             .insert(journals)
             .values({
+                invoice,
                 date: data.date,
                 description: data.description,
                 status: data.status,

@@ -130,7 +130,7 @@ export const createPermission = async (req: Request, res: Response) => {
             table: "permissions",
             data: createdPermission,
             userId: req.user!.id,
-            msg: `created permission #${createdPermission.id}`,
+            msg: `created permission ${createdPermission.code}`,
         });
 
         return res.status(201).json({
@@ -176,7 +176,7 @@ export const createPermissionGroup = async (req: Request, res: Response) => {
             table: "permisson-groups",
             data: createdPermission,
             userId: req.user!.id,
-            msg: `created permission #${createdPermission.id}`,
+            msg: `created permission group "${createdPermission.name}"`,
         });
 
         return res.status(201).json({
@@ -234,7 +234,7 @@ export const updatePermission = async (req: Request, res: Response) => {
             oldData: oldPermission,
             data: updatedPermission,
             userId: req.user!.id,
-            msg: `updated permission #${updatedPermission.id}`,
+            msg: `updated permission ${updatedPermission.code}`,
         });
 
         return res.status(200).json({

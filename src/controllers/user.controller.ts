@@ -84,7 +84,7 @@ export const createUser = async (req: Request, res: Response) => {
             table: "users",
             data: createdUser,
             userId: req.user!.id,
-            msg: `created user #${createdUser.id}`,
+            msg: `created user "${createdUser.username}"`,
         });
 
         const { password, ...rest } = createdUser;
@@ -154,7 +154,7 @@ export const updateUser = async (req: Request, res: Response) => {
             oldData: oldUser,
             data: updatedUser,
             userId: req.user!.id,
-            msg: `updated user #${updatedUser.id}`,
+            msg: `updated user "${updatedUser.username}"`,
         });
 
         return res.status(200).json({
@@ -271,7 +271,7 @@ export const updateUserPosSetup = async (req: Request, res: Response) => {
             oldData: oldUser,
             data: updatedUser,
             userId: req.user!.id,
-            msg: `updated POS setup for user #${id}`,
+            msg: `updated POS setup for user "${oldUser.username}"`,
         });
 
         return res.status(200).json({
@@ -324,7 +324,7 @@ export const changePassword = async (req: Request, res: Response) => {
             table: "users",
             data: { id },
             userId: req.user!.id,
-            msg: `changed password for user #${id}`,
+            msg: `changed password for user "${user.username}"`,
         });
 
         return res.status(200).json({ message: "Password changed successfully" });

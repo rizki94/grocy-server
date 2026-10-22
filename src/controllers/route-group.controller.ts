@@ -82,7 +82,7 @@ export const createRouteGroup = async (req: Request, res: Response) => {
             table: "route_groups",
             data: createdGroup,
             userId: req.user!.id,
-            msg: `created route group #${createdGroup.id}`,
+            msg: `created route group "${createdGroup.name}"`,
         });
 
         return res.status(201).json({
@@ -135,7 +135,7 @@ export const updateRouteGroup = async (req: Request, res: Response) => {
             oldData: oldGroup,
             data: updatedGroup,
             userId: req.user!.id,
-            msg: `updated route group #${updatedGroup.id}`,
+            msg: `updated route group "${updatedGroup.name}"`,
         });
 
         return res.status(200).json({

@@ -105,7 +105,7 @@ export const createCustomer = async (req: Request, res: Response) => {
             table: "contacts",
             data: transformedCustomer,
             userId: req.user!.id,
-            msg: `created customer #${createdCustomer.id}`,
+            msg: `created customer "${createdCustomer.name}"`,
         });
 
         return res.status(201).json({
@@ -174,7 +174,7 @@ export const updateCustomer = async (req: Request, res: Response) => {
             oldData: oldCustomer,
             data: transformedCustomer,
             userId: req.user!.id,
-            msg: `updated customer #${transformedCustomer.id}`,
+            msg: `updated customer "${transformedCustomer.name}"`,
         });
 
         return res.status(200).json({

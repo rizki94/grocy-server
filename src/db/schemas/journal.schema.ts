@@ -13,6 +13,7 @@ import { branches } from "./branch.schema";
 
 export const journals = pgTable("journals", {
     id: uuid("id").defaultRandom().primaryKey(),
+    invoice: text("invoice").notNull().unique(),
     transactionId: uuid("transaction_id").references(() => transactions.id),
     branchId: uuid("branch_id").references(() => branches.id),
     date: date("date").notNull(),

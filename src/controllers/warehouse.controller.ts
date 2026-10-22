@@ -87,7 +87,7 @@ export const createWarehouse = async (req: Request, res: Response) => {
             table: "warehouses",
             data: createdWarehouse,
             userId: req.user!.id,
-            msg: `created warehouse #${createdWarehouse.id}`,
+            msg: `created warehouse "${createdWarehouse.name}"`,
         });
 
         return res.status(201).json({
@@ -140,7 +140,7 @@ export const updateWarehouse = async (req: Request, res: Response) => {
             oldData: oldWarehouse,
             data: updatedWarehouse,
             userId: req.user!.id,
-            msg: `updated warehouse #${updatedWarehouse.id}`,
+            msg: `updated warehouse "${updatedWarehouse.name}"`,
         });
 
         return res.status(200).json({

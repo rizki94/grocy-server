@@ -9,8 +9,8 @@ import {
     branches,
 } from "@/db/schemas";
 import { and, desc, eq, gte, like, lte, or, sql } from "drizzle-orm";
-import { branchScope, resolveBranchCode, resolveBranchId } from "@/helpers/branch.helper";
-import { generateExpenseCode } from "@/helpers/generate-invoice";
+import { branchScope, resolveBranchCode, resolveBranchId, resolveBranchCodeFromId } from "@/helpers/branch.helper";
+import { generateExpenseCode, generateJournalInvoice } from "@/helpers/generate-invoice";
 import { parseTableQuery } from "@/services/table-query";
 import { logAction } from "@/utils/log-helper";
 import { z } from "zod";
@@ -181,38 +181,7 @@ export const createExpense = async (req: Request, res: Response) => {
         const totalAmount = data.lines.reduce((sum, line) => sum + Number(line.amount), 0);
 
         const result = await db.transaction(async (tx) => {
-            // 1. Create Journal
-            const [journal] = await tx
-                .insert(journals)
-                .values({
-                    branchId: resolvedBranchId,
-                    date: data.date,
-                    description: `Biaya #${code}: ${data.description}`,
-                    status: "posted",
-                })
-                .returning();
-
-            // 2. Insert Debit Journal Entries for each expense line
-            for (const line of data.lines) {
-                await tx.insert(journalEntries).values({
-                    journalId: journal.id,
-                    glAccountId: line.glAccountId,
-                    debit: Number(line.amount),
-                    credit: 0,
-                    note: line.note || data.description,
-                });
-            }
-
-            // 3. Insert Balancing Credit Journal Entry for Cash/Bank
-            await tx.insert(journalEntries).values({
-                journalId: journal.id,
-                glAccountId: data.paymentAccountId,
-                debit: 0,
-                credit: totalAmount,
-                note: `Pengeluaran Kas/Bank #${code}`,
-            });
-
-            // 4. Create Expense Record
+            // 1. Create Expense Record in draft state (no journal yet)
             const [expense] = await tx
                 .insert(expenses)
                 .values({
@@ -224,12 +193,11 @@ export const createExpense = async (req: Request, res: Response) => {
                     totalAmount,
                     reference: data.reference,
                     description: data.description,
-                    status: "posted",
-                    journalId: journal.id,
+                    status: "draft",
                 })
                 .returning();
 
-            // 5. Insert Expense Lines
+            // 2. Insert Expense Lines
             for (const line of data.lines) {
                 await tx.insert(expenseLines).values({
                     expenseId: expense.id,
@@ -247,11 +215,11 @@ export const createExpense = async (req: Request, res: Response) => {
             table: "expenses",
             data: result,
             userId: req.user!.id,
-            msg: `created expense #${result.code}`,
+            msg: `created expense draft ${result.code}`,
         });
 
         res.status(201).json({
-            message: "Expense recorded successfully",
+            message: "Expense saved as draft",
             expense: result,
         });
     } catch (error: any) {
@@ -259,6 +227,151 @@ export const createExpense = async (req: Request, res: Response) => {
         res.status(500).json({
             message: error.message || "Failed to record expense",
         });
+    }
+};
+
+export const updateExpense = async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const parsed = expenseInsertSchema.safeParse(req.body);
+    if (!parsed.success) {
+        return res.status(400).json({
+            message: "Validation failed",
+            errors: parsed.error.issues,
+        });
+    }
+
+    const data = parsed.data;
+
+    try {
+        const [existing] = await db
+            .select()
+            .from(expenses)
+            .where(eq(expenses.id, id))
+            .limit(1);
+
+        if (!existing) return res.status(404).json({ message: "Expense not found" });
+        if (existing.status !== "draft") {
+            return res.status(400).json({ message: "Only draft expenses can be edited" });
+        }
+
+        const totalAmount = data.lines.reduce((sum, line) => sum + Number(line.amount), 0);
+
+        await db.transaction(async (tx) => {
+            await tx
+                .update(expenses)
+                .set({
+                    date: data.date,
+                    paymentAccountId: data.paymentAccountId,
+                    totalAmount,
+                    reference: data.reference,
+                    description: data.description,
+                    updatedAt: new Date(),
+                })
+                .where(eq(expenses.id, id));
+
+            await tx.delete(expenseLines).where(eq(expenseLines.expenseId, id));
+
+            for (const line of data.lines) {
+                await tx.insert(expenseLines).values({
+                    expenseId: id,
+                    glAccountId: line.glAccountId,
+                    amount: Number(line.amount),
+                    note: line.note,
+                });
+            }
+        });
+
+        logAction(req, {
+            action: "update",
+            table: "expenses",
+            data: { id },
+            userId: req.user!.id,
+            msg: `updated expense draft ${existing.code}`,
+        });
+
+        res.json({ message: "Expense updated successfully", expense: { ...existing, totalAmount } });
+    } catch (error: any) {
+        console.error("Update expense error:", error);
+        res.status(500).json({ message: error.message || "Failed to update expense" });
+    }
+};
+
+export const postExpense = async (req: Request, res: Response) => {
+    const { id } = req.params;
+
+    try {
+        const [existing] = await db
+            .select()
+            .from(expenses)
+            .where(eq(expenses.id, id))
+            .limit(1);
+
+        if (!existing) return res.status(404).json({ message: "Expense not found" });
+        if (existing.status !== "draft") {
+            return res.status(400).json({ message: "Only draft expenses can be posted" });
+        }
+
+        const lines = await db
+            .select()
+            .from(expenseLines)
+            .where(eq(expenseLines.expenseId, id));
+
+        const totalAmount = lines.reduce((sum, l) => sum + Number(l.amount), 0);
+
+        const branchCode = await resolveBranchCodeFromId(existing.branchId);
+
+        await db.transaction(async (tx) => {
+            // 1. Create posted Journal
+            const [journal] = await tx
+                .insert(journals)
+                .values({
+                    invoice: existing.code,
+                    branchId: existing.branchId,
+                    date: existing.date,
+                    description: `Biaya #${existing.code}: ${existing.description}`,
+                    status: "posted",
+                })
+                .returning();
+
+            // 2. Debit each expense line
+            for (const line of lines) {
+                await tx.insert(journalEntries).values({
+                    journalId: journal.id,
+                    glAccountId: line.glAccountId,
+                    debit: Number(line.amount),
+                    credit: 0,
+                    note: line.note || existing.description,
+                });
+            }
+
+            // 3. Credit Cash/Bank
+            await tx.insert(journalEntries).values({
+                journalId: journal.id,
+                glAccountId: existing.paymentAccountId,
+                debit: 0,
+                credit: totalAmount,
+                note: `Pengeluaran Kas/Bank #${existing.code}`,
+            });
+
+            // 4. Mark expense as posted
+            await tx
+                .update(expenses)
+                .set({ status: "posted", journalId: journal.id, updatedAt: new Date() })
+                .where(eq(expenses.id, id));
+        });
+
+        logAction(req, {
+            action: "update",
+            table: "expenses",
+            data: { id, status: "posted" },
+            userId: req.user!.id,
+            msg: `posted expense ${existing.code}`,
+        });
+
+        res.json({ message: "Expense posted successfully" });
+    } catch (error: any) {
+        console.error("Post expense error:", error);
+        res.status(error.statusCode || 500).json({ message: error.message || "Failed to post expense" });
     }
 };
 
@@ -284,9 +397,12 @@ export const cancelExpense = async (req: Request, res: Response) => {
 
             // Create Reversal Journal if original had a posted journal
             if (expense.journalId) {
+                const branchCode = await resolveBranchCodeFromId(expense.branchId);
+                const reversalInvoice = await generateJournalInvoice("expense", branchCode);
                 const [reversalJournal] = await tx
                     .insert(journals)
                     .values({
+                        invoice: reversalInvoice,
                         branchId: expense.branchId,
                         date: new Date().toISOString().slice(0, 10),
                         description: `Void Biaya #${expense.code}: ${expense.description}`,
@@ -332,7 +448,7 @@ export const cancelExpense = async (req: Request, res: Response) => {
                 table: "expenses",
                 data: expense,
                 userId: req.user!.id,
-                msg: `voided expense #${expense.code}`,
+                msg: `voided expense ${expense.code}`,
             });
         });
 

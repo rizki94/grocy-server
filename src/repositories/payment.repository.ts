@@ -12,7 +12,8 @@ import {
 } from "@/db/schemas";
 import { PaymentWithLinesInsert } from "@/validators/payment.validator";
 import { eq, sql, and } from "drizzle-orm";
-import { resolveBranchId } from "@/helpers/branch.helper";
+import { resolveBranchId, resolveBranchCodeFromId } from "@/helpers/branch.helper";
+import { generateJournalInvoice } from "@/helpers/generate-invoice";
 
 export async function findPaymentById(id: string) {
     const [payment] = await db
@@ -271,9 +272,13 @@ export async function postPayment(id: string) {
         const paymentTypeName = payment.type === "payable" ? "Keluar" : "Masuk";
 
         const effectiveBranchId = await resolveBranchId(payment.branchId);
+        const branchCode = await resolveBranchCodeFromId(effectiveBranchId);
+        const journalType = payment.type === "payable" ? "ap_payment" : "ar_payment";
+        const journalInvoice = await generateJournalInvoice(journalType, branchCode);
         const [journal] = await tx
             .insert(journals)
             .values({
+                invoice: journalInvoice,
                 date: payment.date,
                 description: payment.note || `Pembayaran ${paymentTypeName} ${concatenatedInvoices}${payment.reference ? ` (${payment.reference})` : ""}`,
                 status: "posted",
@@ -446,11 +451,15 @@ export async function voidPayment(id: string) {
         }
 
         const effectiveBranchId = await resolveBranchId(payment.branchId);
+        const branchCode = await resolveBranchCodeFromId(effectiveBranchId);
+        const journalType = payment.type === "payable" ? "ap_payment" : "ar_payment";
+        const journalInvoice = await generateJournalInvoice(journalType, branchCode);
         const [journal] = await tx
             .insert(journals)
             .values({
+                invoice: journalInvoice,
                 date: payment.date,
-                description: `Void Payment ${payment.type === "payable" ? "Out" : "In"} #${id}`,
+                description: `Void Payment ${payment.type === "payable" ? "Out" : "In"} ${payment.reference || id}`,
                 status: "posted",
                 transactionId: null,
                 branchId: effectiveBranchId,

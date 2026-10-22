@@ -26,3 +26,8 @@ export * from "./return-reason.schema";
 export * from "./marketplace.schema";
 export * from "./branch.schema";
 export * from "./expense.schema";
+export * from "./income.schema";
+export * from "./period-closing.schema";
+export * from "./stock-opname.schema";
+export * from "./bank-reconciliation.schema";
+

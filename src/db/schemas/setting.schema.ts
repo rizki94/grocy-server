@@ -1,4 +1,4 @@
-import { pgTable, boolean, uuid, text, timestamp, integer } from "drizzle-orm/pg-core";
+import { pgTable, boolean, uuid, text, timestamp, integer, jsonb, date } from "drizzle-orm/pg-core";
 import { glAccounts } from "./gl-account.schema";
 import { relations } from "drizzle-orm";
 
@@ -22,12 +22,33 @@ export const settings = pgTable("settings", {
     adjustmentPrefix: text("adjustment_prefix").default("ADJ").notNull(),
     posSalesPrefix: text("pos_sales_prefix").default("POS").notNull(),
     expensePrefix: text("expense_prefix").default("EXP").notNull(),
+    incomePrefix: text("income_prefix").default("INC").notNull(),
+    // Journal prefix settings
+    generalJournalPrefix: text("general_journal_prefix").default("JRL").notNull(),
+    expenseJournalPrefix: text("expense_journal_prefix").default("EXP").notNull(),
+    incomeJournalPrefix: text("income_journal_prefix").default("INC").notNull(),
+    salesJournalPrefix: text("sales_journal_prefix").default("SLS").notNull(),
+    purchaseJournalPrefix: text("purchase_journal_prefix").default("PUR").notNull(),
+    arPaymentJournalPrefix: text("ar_payment_journal_prefix").default("AR").notNull(),
+    apPaymentJournalPrefix: text("ap_payment_journal_prefix").default("AP").notNull(),
+    salesReturnJournalPrefix: text("sales_return_journal_prefix").default("SLR").notNull(),
+    purchaseReturnJournalPrefix: text("purchase_return_journal_prefix").default("PCR").notNull(),
+    adjustmentJournalPrefix: text("adjustment_journal_prefix").default("ADJ").notNull(),
+    posJournalPrefix: text("pos_journal_prefix").default("POS").notNull(),
+    closingDate: date("closing_date"),
+    retainedEarningsGlAccountId: uuid("retained_earnings_gl_account_id").references(() => glAccounts.id),
+    closingJournalPrefix: text("closing_journal_prefix").default("CLS").notNull(),
+    printLayouts: jsonb("print_layouts"),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
 export const settingsRelations = relations(settings, ({ one }) => ({
     roundingDifferenceGlAccount: one(glAccounts, {
         fields: [settings.roundingDifferenceGlAccountId],
+        references: [glAccounts.id],
+    }),
+    retainedEarningsGlAccount: one(glAccounts, {
+        fields: [settings.retainedEarningsGlAccountId],
         references: [glAccounts.id],
     }),
 }));
