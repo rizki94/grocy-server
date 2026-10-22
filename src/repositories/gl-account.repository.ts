@@ -1,6 +1,6 @@
 import { db } from "@/db";
 import { glAccounts, journalEntries, journals } from "@/db/schemas";
-import { and, eq, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 
 export async function findGlAccountByCode(code: string) {
     const result = await db
@@ -21,7 +21,8 @@ export async function findLeafGlAccounts() {
         FROM ${glAccounts} child 
         WHERE child.parent_id = ${glAccounts.id}
       )`
-        );
+        )
+        .orderBy(asc(glAccounts.code));
 }
 
 export async function getAccountBalance(glAccountId: string) {

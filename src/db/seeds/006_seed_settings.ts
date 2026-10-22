@@ -16,18 +16,65 @@ export async function seedSettings(dbInstance: typeof db) {
         roundingDiffGlAccountId = roundingAcc[0].id;
     }
 
+    let retainedEarningsGlAccountId = null;
+    const retainedAcc = await dbInstance
+        .select()
+        .from(glAccounts)
+        .where(eq(glAccounts.code, "3200"))
+        .limit(1);
+
+    if (retainedAcc.length > 0) {
+        retainedEarningsGlAccountId = retainedAcc[0].id;
+    }
+
+    const defaultValues = {
+        id: "global",
+        posRound2Digit: false,
+        allowNegativeStock: false,
+        enableInventoryTracking: true,
+        roundingDifferenceGlAccountId: roundingDiffGlAccountId,
+        retainedEarningsGlAccountId: retainedEarningsGlAccountId,
+        minDateOffset: -365,
+        maxDateOffset: 30,
+        lockSalesPrice: false,
+        enableTax: true,
+        purchasePrefix: "PUR",
+        salesPrefix: "SLS",
+        salesReturnPrefix: "SLR",
+        purchaseReturnPrefix: "PCR",
+        transferStockPrefix: "TRF",
+        adjustmentPrefix: "ADJ",
+        posSalesPrefix: "POS",
+        expensePrefix: "EXP",
+        incomePrefix: "INC",
+        generalJournalPrefix: "JRL",
+        expenseJournalPrefix: "EXP",
+        incomeJournalPrefix: "INC",
+        salesJournalPrefix: "SLS",
+        purchaseJournalPrefix: "PUR",
+        arPaymentJournalPrefix: "AR",
+        apPaymentJournalPrefix: "AP",
+        salesReturnJournalPrefix: "SLR",
+        purchaseReturnJournalPrefix: "PCR",
+        adjustmentJournalPrefix: "ADJ",
+        posJournalPrefix: "POS",
+        closingJournalPrefix: "CLS",
+    };
+
     if (existingSettings.length === 0) {
-        await dbInstance.insert(settings).values({
-            id: "global",
-            posRound2Digit: false,
-            allowNegativeStock: false,
-            roundingDifferenceGlAccountId: roundingDiffGlAccountId,
-        });
+        await dbInstance.insert(settings).values(defaultValues);
         console.log("Seeded global settings");
     } else {
-        await dbInstance.update(settings).set({
-            roundingDifferenceGlAccountId: roundingDiffGlAccountId,
-        }).where(eq(settings.id, "global"));
-        console.log("Skipped seeding settings, already exists (updated gl account)");
+        await dbInstance
+            .update(settings)
+            .set({
+                roundingDifferenceGlAccountId: roundingDiffGlAccountId,
+                retainedEarningsGlAccountId: retainedEarningsGlAccountId,
+            })
+            .where(eq(settings.id, "global"));
+        console.log(
+            "Skipped seeding settings, already exists (updated gl accounts)",
+        );
     }
 }
+

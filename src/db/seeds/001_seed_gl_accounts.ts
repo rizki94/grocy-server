@@ -85,6 +85,20 @@ const glAccountsData: GlAccountSeedData[] = [
         parentCode: null,
         isActive: true,
     },
+    {
+        code: "3100",
+        name: "Modal Disetor",
+        type: "equity",
+        parentCode: "3000",
+        isActive: true,
+    },
+    {
+        code: "3200",
+        name: "Laba Ditahan",
+        type: "equity",
+        parentCode: "3000",
+        isActive: true,
+    },
 
     // Income
     {
@@ -97,6 +111,13 @@ const glAccountsData: GlAccountSeedData[] = [
     {
         code: "4100",
         name: "Pendapatan Penjualan",
+        type: "income",
+        parentCode: "4000",
+        isActive: true,
+    },
+    {
+        code: "4200",
+        name: "Pendapatan Lain-lain",
         type: "income",
         parentCode: "4000",
         isActive: true,
@@ -122,6 +143,34 @@ const glAccountsData: GlAccountSeedData[] = [
         name: "Beban Operasional",
         type: "expense",
         parentCode: "5000",
+        isActive: true,
+    },
+    {
+        code: "5210",
+        name: "Beban Gaji & Upah",
+        type: "expense",
+        parentCode: "5200",
+        isActive: true,
+    },
+    {
+        code: "5220",
+        name: "Beban Listrik, Air & Internet",
+        type: "expense",
+        parentCode: "5200",
+        isActive: true,
+    },
+    {
+        code: "5230",
+        name: "Beban Sewa",
+        type: "expense",
+        parentCode: "5200",
+        isActive: true,
+    },
+    {
+        code: "5240",
+        name: "Beban Perlengkapan & Operasional Lain",
+        type: "expense",
+        parentCode: "5200",
         isActive: true,
     },
     {

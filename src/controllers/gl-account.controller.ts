@@ -16,7 +16,7 @@ export const getAllGlAccounts = async (req: Request, res: Response) => {
         const accounts = await db
             .select()
             .from(glAccounts)
-            .orderBy(asc(sql`${glAccounts.code}::integer`));
+            .orderBy(asc(glAccounts.code));
         res.json(accounts);
     } catch (err: any) {
         console.error("getGlAccounts error:", err);
@@ -30,7 +30,7 @@ export const getActiveGlAccounts = async (req: Request, res: Response) => {
             .select()
             .from(glAccounts)
             .where(eq(glAccounts.isActive, true))
-            .orderBy(sql`CAST(${glAccounts.code} AS integer)`);
+            .orderBy(asc(glAccounts.code));
         res.json(accounts);
     } catch (err: any) {
         console.error("getGlAccounts error:", err);
@@ -181,7 +181,7 @@ export const getPaginatedGlAccounts = async (req: Request, res: Response) => {
         // mapping sort
         const sortColumns: Record<string, PgColumn | any> = {
             name: glAccounts.name,
-            code: sql`(${glAccounts.code})::integer`, // cast string -> int
+            code: glAccounts.code,
         };
 
         const sortKey = (query.sort as string) ?? "code"; // default sort by code
