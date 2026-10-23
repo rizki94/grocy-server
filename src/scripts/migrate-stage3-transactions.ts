@@ -293,14 +293,16 @@ async function main() {
     const hNotesSrc = await pool.request().query(`
         SELECT IdNotes, DateNotes, Descr, Approve, BranchId
         FROM H_Notes
+        WHERE LEFT(IdNotes, 6) NOT IN ('BD-BCA', 'BD-BCP')
         ORDER BY DateNotes ASC
     `);
 
-    console.log(`   Fetched ${hNotesSrc.recordset.length} journal headers from SQL Server.`);
+    console.log(`   Fetched ${hNotesSrc.recordset.length} journal headers from SQL Server (excluding payment vouchers).`);
 
     const dNotes1Src = await pool.request().query(`
         SELECT IdNotes, AccAct, DateVl, Descr, Debit, Credit
         FROM D_Notes1
+        WHERE LEFT(IdNotes, 6) NOT IN ('BD-BCA', 'BD-BCP')
     `);
 
     console.log(`   Fetched ${dNotes1Src.recordset.length} journal entry lines from SQL Server.`);
@@ -331,7 +333,7 @@ async function main() {
         const branchCode = (h.BranchId || "").trim();
         const assignedBranch = branchMap[branchCode] || defaultBranch;
         const dateStr = h.DateNotes ? new Date(h.DateNotes).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
-        const status = h.Approve ? ("posted" as const) : ("draft" as const);
+        const status = "posted" as const;
 
         const [journal] = await db
             .insert(journals)
@@ -415,22 +417,9 @@ async function main() {
             targetType = "receivable";
         }
 
-        let paidAmount = 0;
-        let status: "open" | "partial" | "paid" = "open";
-
-        if (settlement) {
-            paidAmount = Math.min(totalAmount, settlement.totalCleared);
-            if (settlement.isClear && (paidAmount >= totalAmount || totalAmount === 0)) {
-                status = "paid";
-            } else if (paidAmount > 0) {
-                status = "partial";
-            } else {
-                status = "open";
-            }
-        } else {
-            paidAmount = 0;
-            status = "open";
-        }
+        // Initial open invoice state is open with 0 paid; Stage 4 will apply the payment lines
+        const paidAmount = 0;
+        const status: "open" | "partial" | "paid" = "open";
 
         const dueDate = settlement?.dueDate || addDays(trx.date, trx.termOfPayment || 0);
 

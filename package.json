@@ -20,7 +20,8 @@
         "fix:invoices": "tsx src/scripts/fix-open-invoices.ts",
         "fix:stocks": "tsx src/scripts/fix-transaction-stocks.ts",
         "fix:paid-amounts": "tsx src/scripts/fix-paid-amounts.ts",
-        "migrate:all": "tsx src/scripts/migrate-stage1-master.ts && tsx src/scripts/migrate-stage2-accounts.ts && tsx src/scripts/migrate-stage3-transactions.ts && tsx src/scripts/migrate-stage4-payments.ts && tsx src/scripts/seed-permissions.ts",
+        "fix:draft-journals": "tsx src/scripts/fix-draft-journals.ts",
+        "migrate:all": "tsx src/scripts/migrate-stage1-master.ts && tsx src/scripts/migrate-stage2-accounts.ts && tsx src/scripts/migrate-stage3-transactions.ts && tsx src/scripts/migrate-stage4-payments.ts && tsx src/scripts/fix-product-ratios.ts && tsx src/scripts/fix-transaction-stocks.ts && tsx src/scripts/fix-paid-amounts.ts && tsx src/scripts/seed-permissions.ts",
         "studio": "npx drizzle-kit studio"
     },
     "keywords": [],

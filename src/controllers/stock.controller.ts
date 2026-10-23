@@ -10,7 +10,7 @@ import {
     transactions,
     warehouses,
 } from "@/db/schemas";
-import { and, asc, desc, eq, inArray, like, or, sql, gte, lte } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, like, or, sql, gte, lte, gt } from "drizzle-orm";
 import { PgColumn } from "drizzle-orm/pg-core";
 import { Request, Response } from "express";
 import { branchScope, productBranchFilter } from "@/helpers/branch.helper";
@@ -27,6 +27,7 @@ export const getMonitoringStock = async (req: Request, res: Response) => {
     const sortKey = (query.sort as string) ?? "productName";
     const search = (query.search as string) ?? "";
     const warehouseId = query.warehouseId as string | undefined;
+    const availableOnly = query.availableOnly === "true" || query.onlyAvailable === "true";
 
     const searchCondition = search
         ? or(
@@ -36,9 +37,10 @@ export const getMonitoringStock = async (req: Request, res: Response) => {
         : undefined;
     
     const warehouseCondition = warehouseId ? eq(stocks.warehouseId, warehouseId) : undefined;
+    const availableCondition = availableOnly ? gt(stocks.qty, 0) : undefined;
     const branchCondition = branchScope(warehouses.branchId, req);
     const prodCondition = productBranchFilter(products, req);
-    const filterCondition = and(searchCondition, warehouseCondition, branchCondition, prodCondition);
+    const filterCondition = and(searchCondition, warehouseCondition, branchCondition, prodCondition, availableCondition);
     
     const order = (query.order as string) === "desc" ? "desc" : "asc";
     const sortColumn = sortColumns[sortKey] ?? products.name;

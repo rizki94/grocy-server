@@ -51,44 +51,55 @@ export const updateSettings = async (req: Request, res: Response) => {
             printLayouts,
         } = req.body;
 
-        await db.update(settings).set({
-            posRound2Digit,
-            allowNegativeStock,
+        const valuesToSave = {
+            posRound2Digit: Boolean(posRound2Digit),
+            allowNegativeStock: Boolean(allowNegativeStock),
             enableInventoryTracking: enableInventoryTracking ?? true,
-            roundingDifferenceGlAccountId,
-            ...(minDateOffset !== undefined ? { minDateOffset: Number(minDateOffset) } : {}),
-            ...(maxDateOffset !== undefined ? { maxDateOffset: Number(maxDateOffset) } : {}),
-            ...(lockSalesPrice !== undefined ? { lockSalesPrice } : {}),
-            ...(enableTax !== undefined ? { enableTax } : {}),
-            ...(purchasePrefix ? { purchasePrefix: purchasePrefix.trim().toUpperCase() } : {}),
-            ...(salesPrefix ? { salesPrefix: salesPrefix.trim().toUpperCase() } : {}),
-            ...(salesReturnPrefix ? { salesReturnPrefix: salesReturnPrefix.trim().toUpperCase() } : {}),
-            ...(purchaseReturnPrefix ? { purchaseReturnPrefix: purchaseReturnPrefix.trim().toUpperCase() } : {}),
-            ...(transferStockPrefix ? { transferStockPrefix: transferStockPrefix.trim().toUpperCase() } : {}),
-            ...(adjustmentPrefix ? { adjustmentPrefix: adjustmentPrefix.trim().toUpperCase() } : {}),
-            ...(posSalesPrefix ? { posSalesPrefix: posSalesPrefix.trim().toUpperCase() } : {}),
-            ...(expensePrefix ? { expensePrefix: expensePrefix.trim().toUpperCase() } : {}),
-            ...(generalJournalPrefix ? { generalJournalPrefix: generalJournalPrefix.trim().toUpperCase() } : {}),
-            ...(expenseJournalPrefix ? { expenseJournalPrefix: expenseJournalPrefix.trim().toUpperCase() } : {}),
-            ...(salesJournalPrefix ? { salesJournalPrefix: salesJournalPrefix.trim().toUpperCase() } : {}),
-            ...(purchaseJournalPrefix ? { purchaseJournalPrefix: purchaseJournalPrefix.trim().toUpperCase() } : {}),
-            ...(arPaymentJournalPrefix ? { arPaymentJournalPrefix: arPaymentJournalPrefix.trim().toUpperCase() } : {}),
-            ...(apPaymentJournalPrefix ? { apPaymentJournalPrefix: apPaymentJournalPrefix.trim().toUpperCase() } : {}),
-            ...(salesReturnJournalPrefix ? { salesReturnJournalPrefix: salesReturnJournalPrefix.trim().toUpperCase() } : {}),
-            ...(purchaseReturnJournalPrefix ? { purchaseReturnJournalPrefix: purchaseReturnJournalPrefix.trim().toUpperCase() } : {}),
-            ...(adjustmentJournalPrefix ? { adjustmentJournalPrefix: adjustmentJournalPrefix.trim().toUpperCase() } : {}),
-            ...(posJournalPrefix ? { posJournalPrefix: posJournalPrefix.trim().toUpperCase() } : {}),
-            ...(closingJournalPrefix ? { closingJournalPrefix: closingJournalPrefix.trim().toUpperCase() } : {}),
-            ...(retainedEarningsGlAccountId !== undefined ? { retainedEarningsGlAccountId } : {}),
-            ...(closingDate !== undefined ? { closingDate } : {}),
+            roundingDifferenceGlAccountId: roundingDifferenceGlAccountId ? roundingDifferenceGlAccountId : null,
+            minDateOffset: minDateOffset !== undefined && minDateOffset !== null && minDateOffset !== "" ? Number(minDateOffset) : -365,
+            maxDateOffset: maxDateOffset !== undefined && maxDateOffset !== null && maxDateOffset !== "" ? Number(maxDateOffset) : 30,
+            lockSalesPrice: Boolean(lockSalesPrice),
+            enableTax: enableTax ?? true,
+            purchasePrefix: purchasePrefix ? purchasePrefix.trim().toUpperCase() : "PUR",
+            salesPrefix: salesPrefix ? salesPrefix.trim().toUpperCase() : "SLS",
+            salesReturnPrefix: salesReturnPrefix ? salesReturnPrefix.trim().toUpperCase() : "SLR",
+            purchaseReturnPrefix: purchaseReturnPrefix ? purchaseReturnPrefix.trim().toUpperCase() : "PCR",
+            transferStockPrefix: transferStockPrefix ? transferStockPrefix.trim().toUpperCase() : "TRF",
+            adjustmentPrefix: adjustmentPrefix ? adjustmentPrefix.trim().toUpperCase() : "ADJ",
+            posSalesPrefix: posSalesPrefix ? posSalesPrefix.trim().toUpperCase() : "POS",
+            expensePrefix: expensePrefix ? expensePrefix.trim().toUpperCase() : "EXP",
+            generalJournalPrefix: generalJournalPrefix ? generalJournalPrefix.trim().toUpperCase() : "JRL",
+            expenseJournalPrefix: expenseJournalPrefix ? expenseJournalPrefix.trim().toUpperCase() : "EXP",
+            salesJournalPrefix: salesJournalPrefix ? salesJournalPrefix.trim().toUpperCase() : "SLS",
+            purchaseJournalPrefix: purchaseJournalPrefix ? purchaseJournalPrefix.trim().toUpperCase() : "PUR",
+            arPaymentJournalPrefix: arPaymentJournalPrefix ? arPaymentJournalPrefix.trim().toUpperCase() : "AR",
+            apPaymentJournalPrefix: apPaymentJournalPrefix ? apPaymentJournalPrefix.trim().toUpperCase() : "AP",
+            salesReturnJournalPrefix: salesReturnJournalPrefix ? salesReturnJournalPrefix.trim().toUpperCase() : "SLR",
+            purchaseReturnJournalPrefix: purchaseReturnJournalPrefix ? purchaseReturnJournalPrefix.trim().toUpperCase() : "PCR",
+            adjustmentJournalPrefix: adjustmentJournalPrefix ? adjustmentJournalPrefix.trim().toUpperCase() : "ADJ",
+            posJournalPrefix: posJournalPrefix ? posJournalPrefix.trim().toUpperCase() : "POS",
+            closingJournalPrefix: closingJournalPrefix ? closingJournalPrefix.trim().toUpperCase() : "CLS",
+            retainedEarningsGlAccountId: retainedEarningsGlAccountId ? retainedEarningsGlAccountId : null,
+            ...(closingDate !== undefined ? { closingDate: closingDate || null } : {}),
             ...(printLayouts !== undefined ? { printLayouts } : {}),
             updatedAt: new Date(),
-        }).where(eq(settings.id, "global"));
+        };
+
+        await db
+            .insert(settings)
+            .values({
+                id: "global",
+                ...valuesToSave,
+            })
+            .onConflictDoUpdate({
+                target: settings.id,
+                set: valuesToSave,
+            });
 
         res.json({ message: "Settings updated successfully" });
-    } catch (error) {
+    } catch (error: any) {
         console.error("Error updating settings", error);
-        res.status(500).json({ message: "Server Error" });
+        res.status(500).json({ message: "Server Error", error: error.message });
     }
 };
 
