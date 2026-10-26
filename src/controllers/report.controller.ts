@@ -22,7 +22,9 @@ import {
     branches,
 } from "@/db/schemas";
 import { and, eq, sql, gte, lte, desc, inArray, asc, ilike, or } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { branchScope } from "@/helpers/branch.helper";
+import { parseTableQuery } from "@/services/table-query";
 
 const isDocumentStatus = (
     status: string,
@@ -249,7 +251,19 @@ export const getBalanceSheet = async (req: Request, res: Response) => {
 
 export const getProductProfitability = async (req: Request, res: Response) => {
     try {
-        const { from, to, search } = req.query;
+        const { from, to } = req.query;
+        const { pageIndex, pageSize, search } = parseTableQuery(req.query);
+        const safePageSize =
+            Number.isSafeInteger(pageSize) && pageSize > 0
+                ? Math.min(pageSize, 100)
+                : 10;
+        const safePageIndex =
+            Number.isSafeInteger(pageIndex) &&
+            pageIndex >= 0 &&
+            Number.isSafeInteger(pageIndex * safePageSize)
+                ? pageIndex
+                : 0;
+        const safeOffset = safePageIndex * safePageSize;
         const fromDate = from
             ? (from as string).split("T")[0]
             : new Date(new Date().getFullYear(), 0, 1)
@@ -264,40 +278,60 @@ export const getProductProfitability = async (req: Request, res: Response) => {
             ? ilike(products.name, `%${search}%`)
             : undefined;
 
-        const report = await db
-            .select({
-                productId: products.id,
-                productName: products.name,
-                totalQty: sql<number>`COALESCE(sum(${transactionDetails.qty}), 0)`,
-                totalRevenue: sql<number>`COALESCE(sum(${transactionDetails.amount}), 0)`,
-                totalCogs: sql<number>`COALESCE(sum(${transactionDetails.totalCost}), 0)`,
-                avgUnitCost: sql<number>`COALESCE(sum(${transactionDetails.totalCost}) / sum(${transactionDetails.qty}), 0)`,
-                avgUnitPrice: sql<number>`COALESCE(sum(${transactionDetails.amount}) / sum(${transactionDetails.qty}), 0)`,
-            })
-            .from(transactionDetails)
-            .innerJoin(
-                transactions,
-                eq(transactionDetails.transactionId, transactions.id),
-            )
-            .innerJoin(products, eq(transactionDetails.productId, products.id))
-            .where(
-                and(
-                    eq(transactions.type, "sales"),
-                    inArray(transactions.status, ["posted", "paid"]),
-                    gte(transactions.date, fromDate),
-                    lte(transactions.date, toDate),
-                    searchCondition,
-                    scope,
-                ),
-            )
-            .groupBy(products.id, products.name)
-            .orderBy(
-                desc(
-                    sql`sum(${transactionDetails.amount}) - sum(${transactionDetails.totalCost})`,
-                ),
-            );
+        const conditions = and(
+            eq(transactions.type, "sales"),
+            inArray(transactions.status, ["posted", "paid"]),
+            gte(transactions.date, fromDate),
+            lte(transactions.date, toDate),
+            searchCondition,
+            scope,
+        );
 
-        res.json(report);
+        const [rows, [count]] = await Promise.all([
+            db
+                .select({
+                    productId: products.id,
+                    productName: products.name,
+                    totalQty: sql<number>`COALESCE(sum(${transactionDetails.qty}), 0)`,
+                    totalRevenue: sql<number>`COALESCE(sum(${transactionDetails.amount}), 0)`,
+                    totalCogs: sql<number>`COALESCE(sum(${transactionDetails.totalCost}), 0)`,
+                    avgUnitCost: sql<number>`COALESCE(sum(${transactionDetails.totalCost}) / sum(${transactionDetails.qty}), 0)`,
+                    avgUnitPrice: sql<number>`COALESCE(sum(${transactionDetails.amount}) / sum(${transactionDetails.qty}), 0)`,
+                })
+                .from(transactionDetails)
+                .innerJoin(
+                    transactions,
+                    eq(transactionDetails.transactionId, transactions.id),
+                )
+                .innerJoin(products, eq(transactionDetails.productId, products.id))
+                .where(conditions)
+                .groupBy(products.id, products.name)
+                .orderBy(
+                    desc(
+                        sql`sum(${transactionDetails.amount}) - sum(${transactionDetails.totalCost})`,
+                    ),
+                )
+                .limit(safePageSize)
+                .offset(safeOffset),
+            db
+                .select({ count: sql<number>`count(distinct ${products.id})` })
+                .from(transactionDetails)
+                .innerJoin(
+                    transactions,
+                    eq(transactionDetails.transactionId, transactions.id),
+                )
+                .innerJoin(products, eq(transactionDetails.productId, products.id))
+                .where(conditions),
+        ]);
+        const rowCount = Number(count?.count || 0);
+
+        res.json({
+            rows,
+            rowCount,
+            pageCount: Math.ceil(rowCount / safePageSize),
+            pageIndex: safePageIndex,
+            pageSize: safePageSize,
+        });
     } catch (error: any) {
         console.error("Product Profitability Error:", error);
         res.status(500).json({
@@ -935,6 +969,7 @@ export const getTransactionSummary = async (req: Request, res: Response) => {
                     paidAmount: paid,
                     remainingAmount: amt - paid,
                 };
+
             });
         }
         // 5. Journals
@@ -1077,5 +1112,199 @@ export const getTransactionSummary = async (req: Request, res: Response) => {
     } catch (err: any) {
         console.error("[getTransactionSummary]", err);
         return res.status(500).json({ message: "Failed to generate transaction summary", error: err.message });
+    }
+};
+
+export const getTransactionRegister = async (req: Request, res: Response) => {
+    try {
+        const { transactionType, sortBy } = req.params;
+        if (
+            !["sales", "purchase", "sales-return", "purchase-return"].includes(
+                transactionType,
+            ) ||
+            !["by-salesman", "by-date", "by-invoice", "by-customer"].includes(
+                sortBy,
+            )
+        ) {
+            return res.status(400).json({ message: "Invalid report type" });
+        }
+
+        const from = typeof req.query.from === "string" ? req.query.from : "";
+        const to = typeof req.query.to === "string" ? req.query.to : "";
+        const isValidDate = (value: string) =>
+            /^\d{4}-\d{2}-\d{2}$/.test(value) &&
+            !Number.isNaN(Date.parse(`${value}T00:00:00.000Z`)) &&
+            new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) === value;
+        if (!isValidDate(from) || !isValidDate(to)) {
+            return res.status(400).json({
+                message: "Valid from and to dates are required",
+            });
+        }
+        const fromDate = from;
+        const toDate = to;
+        const rangeDays =
+            (Date.parse(`${toDate}T00:00:00.000Z`) -
+                Date.parse(`${fromDate}T00:00:00.000Z`)) /
+                86_400_000 +
+            1;
+        if (rangeDays < 1 || rangeDays > 90) {
+            return res.status(400).json({
+                message: "Date range must be between 1 and 90 days",
+            });
+        }
+
+        const transactionTypes =
+            transactionType === "sales"
+                ? (["sales", "pos_sales"] as const)
+                : transactionType === "sales-return"
+                  ? (["sales_return"] as const)
+                  : transactionType === "purchase-return"
+                    ? (["purchase_return"] as const)
+                    : (["purchase"] as const);
+        const transactionStatuses = transactionType.endsWith("-return")
+            ? (["posted"] as const)
+            : (["posted", "partial", "paid"] as const);
+        const scope = branchScope(transactions.branchId, req);
+        const originalTransaction = alias(
+            transactions,
+            "register_original_transaction",
+        );
+        const originalContact = alias(contacts, "register_original_contact");
+        const originalUser = alias(users, "register_original_user");
+        const contactNameExpression = transactionType.endsWith("-return")
+            ? sql<string>`COALESCE(${originalContact.name}, ${contacts.name})`
+            : contacts.name;
+        const userNameExpression = transactionType.endsWith("-return")
+            ? sql<string>`COALESCE(${originalUser.displayName}, ${originalUser.username}, ${users.displayName}, ${users.username})`
+            : sql<string>`COALESCE(${users.displayName}, ${users.username})`;
+        const contactIdExpression = transactionType.endsWith("-return")
+            ? sql<string | null>`COALESCE(${originalTransaction.contactId}, ${transactions.contactId})`
+            : transactions.contactId;
+        const userIdExpression = transactionType.endsWith("-return")
+            ? sql<string>`COALESCE(${originalTransaction.userId}, ${transactions.userId})`
+            : transactions.userId;
+        const orderBy =
+            sortBy === "by-salesman"
+                ? [
+                      asc(
+                          userNameExpression,
+                      ),
+                      asc(transactions.date),
+                      asc(transactions.invoice),
+                      asc(contacts.name),
+                  ]
+                : sortBy === "by-invoice"
+                  ? [
+                        asc(transactions.invoice),
+                        asc(transactions.date),
+                        asc(contacts.name),
+                    ]
+                  : sortBy === "by-customer"
+                    ? [
+                          asc(contactNameExpression),
+                          asc(transactions.date),
+                          asc(transactions.invoice),
+                      ]
+                    : [
+                          asc(transactions.date),
+                          asc(transactions.invoice),
+                          asc(contacts.name),
+                      ];
+
+        const rows = await db
+            .select({
+                id: transactions.id,
+                invoice: transactions.invoice,
+                date: transactions.date,
+                contactId: contactIdExpression,
+                userId: userIdExpression,
+                contactName: contactNameExpression,
+                userName: userNameExpression,
+                totalAmount: transactions.totalAmount,
+            })
+            .from(transactions)
+            .leftJoin(contacts, eq(transactions.contactId, contacts.id))
+            .leftJoin(users, eq(transactions.userId, users.id))
+            .leftJoin(
+                originalTransaction,
+                eq(transactions.parentId, originalTransaction.id),
+            )
+            .leftJoin(
+                originalContact,
+                eq(originalTransaction.contactId, originalContact.id),
+            )
+            .leftJoin(
+                originalUser,
+                eq(originalTransaction.userId, originalUser.id),
+            )
+            .where(
+                and(
+                    inArray(transactions.type, transactionTypes),
+                    inArray(transactions.status, transactionStatuses),
+                    gte(transactions.date, fromDate),
+                    lte(transactions.date, toDate),
+                    scope,
+                ),
+            )
+            .orderBy(...orderBy);
+
+        const normalizedRows = rows.map((row) => ({
+            ...row,
+            date: String(row.date),
+            contactName: row.contactName || "-",
+            userName: row.userName || "-",
+            totalAmount: Number(row.totalAmount || 0),
+        }));
+        const reportRows =
+            sortBy === "by-invoice"
+                ? normalizedRows.map(
+                      ({ contactId, userId, ...row }) => ({
+                          ...row,
+                          transactionCount: 1,
+                      }),
+                  )
+                : Array.from(
+                      normalizedRows.reduce((groups, row) => {
+                          const groupKey =
+                              sortBy === "by-date"
+                                  ? row.date
+                                  : sortBy === "by-customer"
+                                    ? (row.contactId ?? `name:${row.contactName}`)
+                                    : row.userId;
+                          const group = groups.get(groupKey) ?? {
+                              id: `${sortBy}-${groups.size}`,
+                              date: sortBy === "by-date" ? row.date : undefined,
+                              contactName:
+                                  sortBy === "by-customer"
+                                      ? row.contactName
+                                      : undefined,
+                              userName:
+                                  sortBy === "by-salesman"
+                                      ? row.userName
+                                      : undefined,
+                              transactionCount: 0,
+                              totalAmount: 0,
+                          };
+                          group.transactionCount += 1;
+                          group.totalAmount = Number(
+                              (group.totalAmount + row.totalAmount).toFixed(2),
+                          );
+                          groups.set(groupKey, group);
+                          return groups;
+                      }, new Map()),
+                  ).map(([, group]) => group);
+
+        return res.json({
+            fromDate,
+            toDate,
+            rows: reportRows,
+            totalAmount: reportRows.reduce(
+                (total, row) => total + row.totalAmount,
+                0,
+            ),
+        });
+    } catch (error) {
+        console.error("Transaction Register Error:", error);
+        return res.status(500).json({ message: "Failed to generate report" });
     }
 };
