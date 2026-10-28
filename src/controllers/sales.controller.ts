@@ -40,6 +40,7 @@ import { Request, Response } from "express";
 import { findGlAccountByCode } from "@/repositories/gl-account.repository";
 import { parseTableQuery } from "@/services/table-query";
 import { branchScope, withBranch } from "@/helpers/branch.helper";
+import { isTaxEnabled, withoutTax } from "@/helpers/tax.helper";
 
 export async function getAllSales(req: Request, res: Response) {
     try {
@@ -90,11 +91,13 @@ export const createSales = async (req: Request, res: Response) => {
         });
     }
 
-    const sales = parsed.data;
     const branchCode = await resolveBranchCode(req);
     const invoice = await generateInvoice("sales", branchCode);
 
     try {
+        const sales = (await isTaxEnabled())
+            ? parsed.data
+            : withoutTax(parsed.data);
         const [createdSales] = await db
             .insert(transactions)
             .values(
@@ -155,12 +158,16 @@ export const updateSales = async (req: Request, res: Response) => {
         });
     }
 
-    const sales = parsed.data;
+    let sales = parsed.data;
 
     if (!sales.id)
         return res.status(400).json({ message: "Sales id is required" });
 
     try {
+        if (!(await isTaxEnabled())) {
+            sales = withoutTax(sales);
+        }
+
         const oldSales = await db
             .select()
             .from(transactions)
@@ -254,19 +261,87 @@ export const postSales = async (req: Request, res: Response) => {
 
     try {
         let postedSales: any;
+        const taxEnabled = await isTaxEnabled();
 
         await db.transaction(async (tx) => {
             // Guard: check current status first
             const [existing] = await tx
                 .select()
                 .from(transactions)
-                .where(eq(transactions.id, id));
+                .where(eq(transactions.id, id))
+                .for("update");
 
             if (!existing) throw new Error("Sales not found");
             if (existing.status !== "draft" && existing.status !== "order") {
                 throw new Error(
                     `Sales is already ${existing.status} and cannot be posted again`,
                 );
+            }
+
+            if (existing.contactId) {
+                const [customer] = await tx
+                    .select({
+                        id: contacts.id,
+                        name: contacts.name,
+                        contactType: contacts.contactType,
+                        creditLimit: contacts.creditLimit,
+                        invoiceLimit: contacts.invoiceLimit,
+                    })
+                    .from(contacts)
+                    .where(eq(contacts.id, existing.contactId))
+                    .for("update");
+
+                if (!customer || customer.contactType !== "customer") {
+                    throw new Error("Sales customer not found");
+                }
+
+                const creditLimit = Number(customer.creditLimit || 0);
+                const invoiceLimit = Number(customer.invoiceLimit || 0);
+
+                if (creditLimit > 0 || invoiceLimit > 0) {
+                    const [openInvoiceStats] = await tx
+                        .select({
+                            unpaidAmount: sql<number>`COALESCE(SUM(${openInvoices.amount} - ${openInvoices.paidAmount}), 0)`,
+                            unpaidCount: sql<number>`COUNT(*)`,
+                        })
+                        .from(openInvoices)
+                        .where(
+                            and(
+                                eq(openInvoices.contactId, customer.id),
+                                eq(openInvoices.type, "receivable"),
+                                or(
+                                    eq(openInvoices.status, "open"),
+                                    eq(openInvoices.status, "partial"),
+                                ),
+                                sql`${openInvoices.amount} > ${openInvoices.paidAmount}`,
+                                branchScope(openInvoices.branchId, req),
+                            ),
+                        );
+
+                    const unpaidAmount = Number(
+                        openInvoiceStats?.unpaidAmount || 0,
+                    );
+                    const unpaidCount = Number(
+                        openInvoiceStats?.unpaidCount || 0,
+                    );
+                    const projectedAmount =
+                        unpaidAmount + Number(existing.totalAmount || 0);
+                    const projectedCount = unpaidCount + 1;
+                    const exceededLimits = [
+                        creditLimit > 0 && projectedAmount > creditLimit
+                            ? `credit limit ${creditLimit} (projected outstanding ${projectedAmount})`
+                            : null,
+                        invoiceLimit > 0 && projectedCount > invoiceLimit
+                            ? `invoice limit ${invoiceLimit} (projected open invoices ${projectedCount})`
+                            : null,
+                    ].filter((message): message is string => message !== null);
+
+                    if (exceededLimits.length > 0) {
+                        throw new Error(
+                            `Cannot post sales: customer "${customer.name}" exceeds ${exceededLimits.join(" and ")}`,
+                        );
+                    }
+                }
             }
 
             // Guard: check no journal already exists for this transaction
@@ -283,7 +358,17 @@ export const postSales = async (req: Request, res: Response) => {
 
             const [sales] = await tx
                 .update(transactions)
-                .set({ status: "posted" })
+                .set({
+                    status: "posted",
+                    ...(!taxEnabled
+                        ? {
+                              totalTax: 0,
+                              totalAmount:
+                                  Number(existing.subtotal || 0) -
+                                  Number(existing.totalDiscount || 0),
+                          }
+                        : {}),
+                })
                 .where(eq(transactions.id, id))
                 .returning();
 
@@ -300,8 +385,15 @@ export const postSales = async (req: Request, res: Response) => {
                 throw new Error("Sales has no details");
             }
 
+            if (!taxEnabled) {
+                await tx
+                    .update(transactionDetails)
+                    .set({ taxRate: 0 })
+                    .where(eq(transactionDetails.transactionId, id));
+            }
+
             // OUT
-            await updateStockForTransaction(id, "sales", details);
+            await updateStockForTransaction(id, "sales", details, tx);
 
             // Fetch metrics for Sales
             const mappings = await tx

@@ -233,11 +233,13 @@ export const analyzeBatchSales = async (req: Request, res: Response) => {
                 .where(
                     and(
                         inArray(openInvoices.contactId, uniqueCustomerIds),
+                        eq(openInvoices.type, "receivable"),
                         branchScope(openInvoices.branchId, req),
                         or(
                             eq(openInvoices.status, "open"),
                             eq(openInvoices.status, "partial")
-                        )
+                        ),
+                        sql`${openInvoices.amount} > ${openInvoices.paidAmount}`,
                     )
                 )
                 .groupBy(openInvoices.contactId);

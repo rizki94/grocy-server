@@ -1,7 +1,9 @@
 import { db } from "@/db";
 import { contacts } from "@/db/schemas/contact.schema";
+import { openInvoices } from "@/db/schemas/payment.schema";
 import { routeGroups } from "@/db/schemas/route-group.schema";
 import { users } from "@/db/schemas/user.schema";
+import { branchScope } from "@/helpers/branch.helper";
 import { logAction } from "@/utils/log-helper";
 import { CacheService } from "@/services/cache-service";
 import {
@@ -200,6 +202,7 @@ export const getActiveCustomers = async (req: Request, res: Response) => {
                         address: contacts.address,
                         termOfPayment: contacts.termOfPayment,
                         creditLimit: contacts.creditLimit,
+                        invoiceLimit: contacts.invoiceLimit,
                         phone: contacts.phone,
                         email: contacts.email,
                         priceGroupId: contacts.priceGroupId,
@@ -228,6 +231,64 @@ export const getActiveCustomers = async (req: Request, res: Response) => {
     } catch (error) {
         console.error("Error fetching active customers:", error);
         res.status(500).json({ message: "Failed to fetch active customers" });
+    }
+};
+
+export const getCustomerCreditStatus = async (req: Request, res: Response) => {
+    try {
+        const [customer] = await db
+            .select({
+                id: contacts.id,
+                creditLimit: contacts.creditLimit,
+                invoiceLimit: contacts.invoiceLimit,
+            })
+            .from(contacts)
+            .where(
+                and(
+                    eq(contacts.id, req.params.id),
+                    eq(contacts.contactType, "customer"),
+                ),
+            )
+            .limit(1);
+
+        if (!customer) {
+            return res.status(404).json({ message: "Customer not found" });
+        }
+
+        const [openInvoiceStats] = await db
+            .select({
+                currentUnpaidAmount: sql<number>`COALESCE(SUM(${openInvoices.amount} - ${openInvoices.paidAmount}), 0)`,
+                currentUnpaidCount: sql<number>`COUNT(*)`,
+            })
+            .from(openInvoices)
+            .where(
+                and(
+                    eq(openInvoices.contactId, customer.id),
+                    eq(openInvoices.type, "receivable"),
+                    or(
+                        eq(openInvoices.status, "open"),
+                        eq(openInvoices.status, "partial"),
+                    ),
+                    sql`${openInvoices.amount} > ${openInvoices.paidAmount}`,
+                    branchScope(openInvoices.branchId, req),
+                ),
+            );
+
+        return res.status(200).json({
+            creditLimit: Number(customer.creditLimit || 0),
+            invoiceLimit: Number(customer.invoiceLimit || 0),
+            currentUnpaidAmount: Number(
+                openInvoiceStats?.currentUnpaidAmount || 0,
+            ),
+            currentUnpaidCount: Number(
+                openInvoiceStats?.currentUnpaidCount || 0,
+            ),
+        });
+    } catch (error) {
+        console.error("Error fetching customer credit status:", error);
+        return res
+            .status(500)
+            .json({ message: "Failed to fetch customer credit status" });
     }
 };
 

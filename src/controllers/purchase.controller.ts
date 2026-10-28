@@ -18,6 +18,7 @@ import {
     resolveBranchCode,
     resolveBranchCodeFromId,
 } from "@/helpers/branch.helper";
+import { isTaxEnabled, withoutTax } from "@/helpers/tax.helper";
 import { logAction } from "@/utils/log-helper";
 import { updateStockForTransaction } from "@/repositories/stock.repository";
 import {
@@ -96,11 +97,13 @@ export const createPurchase = async (req: Request, res: Response) => {
         });
     }
 
-    const purchase = parsed.data;
     const branchCode = await resolveBranchCode(req);
     const invoice = await generateInvoice("purchase", branchCode);
 
     try {
+        const purchase = (await isTaxEnabled())
+            ? parsed.data
+            : withoutTax(parsed.data);
         const [createdPurchase] = await db
             .insert(transactions)
             .values(
@@ -164,12 +167,16 @@ export const updatePurchase = async (req: Request, res: Response) => {
         });
     }
 
-    const purchase = parsed.data;
+    let purchase = parsed.data;
 
     if (!purchase.id)
         return res.status(400).json({ message: "Purchase id is required" });
 
     try {
+        if (!(await isTaxEnabled())) {
+            purchase = withoutTax(purchase);
+        }
+
         const oldPurchase = await db
             .select()
             .from(transactions)
@@ -263,6 +270,7 @@ export const postPurchase = async (req: Request, res: Response) => {
 
     try {
         let postedPurchase: any;
+        const taxEnabled = await isTaxEnabled();
 
         await db.transaction(async (tx) => {
             // Guard: check current status first
@@ -292,7 +300,17 @@ export const postPurchase = async (req: Request, res: Response) => {
 
             const [purchase] = await tx
                 .update(transactions)
-                .set({ status: "posted" })
+                .set({
+                    status: "posted",
+                    ...(!taxEnabled
+                        ? {
+                              totalTax: 0,
+                              totalAmount:
+                                  Number(existing.subtotal || 0) -
+                                  Number(existing.totalDiscount || 0),
+                          }
+                        : {}),
+                })
                 .where(eq(transactions.id, id))
                 .returning();
 
@@ -307,7 +325,14 @@ export const postPurchase = async (req: Request, res: Response) => {
                 throw new Error("Purchase has no details");
             }
 
-            await updateStockForTransaction(id, "purchase", details);
+            if (!taxEnabled) {
+                await tx
+                    .update(transactionDetails)
+                    .set({ taxRate: 0 })
+                    .where(eq(transactionDetails.transactionId, id));
+            }
+
+            await updateStockForTransaction(id, "purchase", details, tx);
 
             const mappings = await tx
                 .select()

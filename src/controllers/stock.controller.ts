@@ -142,6 +142,40 @@ export const getMonitoringStock = async (req: Request, res: Response) => {
     }
 };
 
+export const getProductWarehouseStock = async (req: Request, res: Response) => {
+    const { productId } = req.params;
+    const warehouseId = req.query.warehouseId as string | undefined;
+
+    if (!warehouseId) {
+        return res.status(400).json({ message: "Warehouse is required" });
+    }
+
+    try {
+        const [stock] = await db
+            .select({
+                baseQty: sql<number>`COALESCE(SUM(${stocks.qty}), 0)`,
+            })
+            .from(stocks)
+            .innerJoin(products, eq(stocks.productId, products.id))
+            .leftJoin(warehouses, eq(warehouses.id, stocks.warehouseId))
+            .where(
+                and(
+                    eq(stocks.productId, productId),
+                    eq(stocks.warehouseId, warehouseId),
+                    branchScope(warehouses.branchId, req),
+                    productBranchFilter(products, req),
+                ),
+            );
+
+        return res.json({ baseQty: Number(stock?.baseQty ?? 0) });
+    } catch (error) {
+        console.error("Error fetching product warehouse stock:", error);
+        return res
+            .status(500)
+            .json({ message: "Failed to fetch product warehouse stock" });
+    }
+};
+
 export const getMovementStocks = async (req: Request, res: Response) => {
     const query = req.query;
     const pageIndex = parseInt(query.pageIndex as string) || 0;

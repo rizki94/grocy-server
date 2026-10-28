@@ -37,11 +37,6 @@ export async function checkout(req: Request, res: Response) {
         paidAmount: providedPaidAmount,
     } = req.body;
 
-    const paidAmount =
-        providedPaidAmount !== undefined
-            ? Number(providedPaidAmount)
-            : totalAmount;
-
     try {
         // 1. Validate POS Session
         const session = await db
@@ -85,8 +80,14 @@ export async function checkout(req: Request, res: Response) {
             const invoice = await generateInvoice("pos_sales", branchCode);
 
             const globalSettings = await tx.select().from(settings).where(eq(settings.id, "global")).limit(1).then(r => r[0]);
-            
-            const originalTotalAmount = subtotal - totalDiscount + totalTax;
+            const taxEnabled = globalSettings?.enableTax ?? true;
+            const appliedTax = taxEnabled ? Number(totalTax || 0) : 0;
+            const originalTotalAmount =
+                Number(subtotal) - Number(totalDiscount) + appliedTax;
+            const paidAmount =
+                providedPaidAmount !== undefined
+                    ? Number(providedPaidAmount)
+                    : originalTotalAmount;
             let finalTotalAmount = originalTotalAmount;
             let roundingDifference = 0;
 
@@ -105,7 +106,7 @@ export async function checkout(req: Request, res: Response) {
                     date: new Date().toISOString().split("T")[0],
                     subtotal,
                     totalDiscount,
-                    totalTax,
+                    totalTax: appliedTax,
                     totalAmount: originalTotalAmount,
                     status: paidAmount >= finalTotalAmount ? "paid" : "order",
                     userId: req.user!.id,
@@ -154,7 +155,7 @@ export async function checkout(req: Request, res: Response) {
                         baseRatio: d.baseRatio || 1,
                         unitCost: d.unitCost || 0,
                         totalCost: d.totalCost || 0,
-                        taxRate: d.taxRate || 0,
+                        taxRate: taxEnabled ? d.taxRate || 0 : 0,
                         movementType: -1, // OUT
                     })
                     .returning();
@@ -212,7 +213,7 @@ export async function checkout(req: Request, res: Response) {
                         amount = subtotal - totalDiscount; // Revenue
                     }
                 } else if (map.type === "sales_tax") {
-                    amount = totalTax; // Tax
+                    amount = appliedTax; // Tax
                 }
 
                 if (amount === 0) continue;

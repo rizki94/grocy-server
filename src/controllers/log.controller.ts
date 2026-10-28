@@ -11,6 +11,20 @@ export const getLogs = async (req: Request, res: Response) => {
         const pageSize = parseInt(query.pageSize as string) || 10;
         const search = (query.search as string)?.toLowerCase() || "";
         const tableFilter = (query.table as string) || "";
+        const actionFilter = (query.action as string)?.toLowerCase() || "";
+        const userFilter = (query.userId as string) || "";
+        const levelFilter = (query.level as string)?.toLowerCase() || "";
+        const parseDateBound = (value: unknown, endOfDay: boolean) => {
+            if (typeof value !== "string" || !value) return undefined;
+            const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+            const normalized = dateOnly
+                ? `${value}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}`
+                : value;
+            const timestamp = new Date(normalized).getTime();
+            return Number.isFinite(timestamp) ? timestamp : undefined;
+        };
+        const from = parseDateBound(query.from, false);
+        const to = parseDateBound(query.to, true);
         const sortOrder = (query.order as string) === "asc" ? "asc" : "desc";
 
         const data = await fs.readFile("./logs/log.json", "utf-8");
@@ -36,9 +50,72 @@ export const getLogs = async (req: Request, res: Response) => {
             userList.map((u) => [u.id, u.username])
         );
 
+        const getLevelName = (level: number) => {
+            if (!Number.isFinite(level)) return "";
+            const names: Record<number, string> = {
+                10: "trace",
+                20: "debug",
+                30: "info",
+                40: "warn",
+                50: "error",
+                60: "fatal",
+            };
+            return names[level] || String(level);
+        };
+        const getActionName = (log: any) =>
+            String(log.action || log.req?.method || "").toLowerCase();
+        const getUserId = (log: any) =>
+            String(log.performedBy || log.userId || log.req?.user?.id || "");
+
+        const filters = {
+            actions: Array.from(
+                new Set(lines.map(getActionName).filter(Boolean)),
+            ).sort(),
+            tables: Array.from(
+                new Set(lines.map((log) => String(log.table || "")).filter(Boolean)),
+            ).sort(),
+            users: Array.from(
+                new Set(
+                    lines
+                        .map(getUserId)
+                        .filter(Boolean),
+                ),
+            )
+                .map((id) => ({ id, name: usersMap[id] || id }))
+                .sort((a, b) => a.name.localeCompare(b.name)),
+            levels: Array.from(
+                new Set(lines.map((log) => getLevelName(Number(log.level))).filter(Boolean)),
+            ).sort(),
+        };
+
         // Filter by table
         if (tableFilter) {
             lines = lines.filter((log) => log.table === tableFilter);
+        }
+
+        if (actionFilter) {
+            lines = lines.filter((log) => getActionName(log) === actionFilter);
+        }
+
+        if (userFilter) {
+            lines = lines.filter((log) => {
+                const userId = getUserId(log);
+                return userFilter === "system" ? !userId : userId === userFilter;
+            });
+        }
+
+        if (levelFilter) {
+            lines = lines.filter(
+                (log) => getLevelName(Number(log.level)) === levelFilter,
+            );
+        }
+
+        if (from !== undefined) {
+            lines = lines.filter((log) => Number(log.time) >= from);
+        }
+
+        if (to !== undefined) {
+            lines = lines.filter((log) => Number(log.time) <= to);
         }
 
         // Filter by search
@@ -46,8 +123,9 @@ export const getLogs = async (req: Request, res: Response) => {
             lines = lines.filter((log) => {
                 const msg = (log.msg || "").toLowerCase();
                 const table = (log.table || "").toLowerCase();
-                const action = (log.action || "").toLowerCase();
-                const username = (log.userId ? usersMap[log.userId] || "unknown" : "unknown").toLowerCase();
+                const action = getActionName(log);
+                const userId = getUserId(log);
+                const username = (userId ? usersMap[userId] || userId : "unknown").toLowerCase();
 
                 return (
                     msg.includes(search) ||
@@ -71,8 +149,8 @@ export const getLogs = async (req: Request, res: Response) => {
 
         const rows = paginatedLines.map((log) => ({
             ...log,
-            performedByUsername: log.userId
-                ? usersMap[log.userId] || "unknown"
+            performedByUsername: getUserId(log)
+                ? usersMap[getUserId(log)] || getUserId(log) || "unknown"
                 : null,
         }));
 
@@ -82,6 +160,7 @@ export const getLogs = async (req: Request, res: Response) => {
             rowCount: totalCount,
             pageIndex,
             pageSize,
+            filters,
         });
     } catch (err: any) {
         console.error("LOGS ERROR DETAILS:", err);

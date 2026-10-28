@@ -10,6 +10,7 @@ import {
 } from "@/db/schemas";
 import { addDays } from "@/helpers/add-days";
 import { generateInvoice, generateJournalInvoice } from "@/helpers/generate-invoice";
+import { validateReturnQuantities } from "@/helpers/return-quantity.helper";
 import { logAction } from "@/utils/log-helper";
 import { updateStockForTransaction } from "@/repositories/stock.repository";
 import { purchaseById, extractDetails } from "@/repositories/transaction.repository";
@@ -36,6 +37,7 @@ import { findGlAccountByCode } from "@/repositories/gl-account.repository";
 import { TransactionType } from "@/constants/transaction.constant";
 import { parseTableQuery } from "@/services/table-query";
 import { branchScope, withBranch, resolveBranchId, resolveBranchCode, resolveBranchCodeFromId } from "@/helpers/branch.helper";
+import { isTaxEnabled, withoutTax } from "@/helpers/tax.helper";
 
 export async function getAllPurchaseReturns(req: Request, res: Response) {
     try {
@@ -95,11 +97,14 @@ export const createPurchaseReturn = async (req: Request, res: Response) => {
         });
     }
 
-    const { details, ...purchaseData } = parsed.data;
     const branchCode = await resolveBranchCode(req);
     const invoice = await generateInvoice("purchase_return", branchCode);
 
     try {
+        const purchaseDataWithDetails = (await isTaxEnabled())
+            ? parsed.data
+            : withoutTax(parsed.data);
+        const { details, ...purchaseData } = purchaseDataWithDetails;
         const [createdPurchase] = await db
             .insert(transactions)
             .values(
@@ -107,7 +112,7 @@ export const createPurchaseReturn = async (req: Request, res: Response) => {
                     ...purchaseData,
                     invoice,
                     type: "purchase_return",
-                    status: "order",
+                    status: "draft",
                     userId: req.user!.id,
                 }, req)
             )
@@ -160,12 +165,16 @@ export const updatePurchaseReturn = async (req: Request, res: Response) => {
         });
     }
 
-    const purchase = parsed.data;
+    let purchase = parsed.data;
 
     if (!purchase.id)
         return res.status(400).json({ message: "Purchase id is required" });
 
     try {
+        if (!(await isTaxEnabled())) {
+            purchase = withoutTax(purchase);
+        }
+
         const oldPurchase = await db
             .select()
             .from(transactions)
@@ -174,6 +183,11 @@ export const updatePurchaseReturn = async (req: Request, res: Response) => {
 
         if (!oldPurchase)
             return res.status(404).json({ message: "Purchase not found" });
+        if (oldPurchase.status !== "draft" && oldPurchase.status !== "order") {
+            return res.status(400).json({
+                message: `Purchase return is ${oldPurchase.status} and cannot be edited`,
+            });
+        }
 
         const [updatedPurchase] = await db
             .update(transactions)
@@ -252,11 +266,13 @@ export const postPurchaseReturn = async (req: Request, res: Response) => {
     const { id } = req.params;
 
     try {
+        const taxEnabled = await isTaxEnabled();
         await db.transaction(async (tx) => {
             const [existing] = await tx
                 .select()
                 .from(transactions)
-                .where(eq(transactions.id, id));
+                .where(eq(transactions.id, id))
+                .for("update");
 
             if (!existing) throw new Error("Purchase return not found");
             if (existing.status !== "draft" && existing.status !== "order") {
@@ -295,15 +311,29 @@ export const postPurchaseReturn = async (req: Request, res: Response) => {
                 throw new Error("Purchase return has no details");
             }
 
+            await validateReturnQuantities(
+                tx,
+                id,
+                existing.parentId,
+                "purchase",
+                "purchase_return",
+                details,
+            );
+
             // Update Stock (OUT)
-            await updateStockForTransaction(id, "purchase_return", details);
+            await updateStockForTransaction(
+                id,
+                "purchase_return",
+                details,
+                tx,
+            );
 
             // Calculate subtotal, tax, and total amount
             let calcSubtotal = Number(purchase.subtotal || 0);
-            let calcTax = Number(purchase.totalTax || 0);
+            let calcTax = taxEnabled ? Number(purchase.totalTax || 0) : 0;
             let calcDiscount = Number(purchase.totalDiscount || 0);
 
-            if (calcTax === 0) {
+            if (taxEnabled && calcTax === 0) {
                 calcTax = details.reduce((sum, d) => {
                     const linePrice = Number(d.qty || 0) * Number(d.price || 0) - Number(d.discount || 0);
                     return sum + linePrice * (Number(d.taxRate || 0) / 100);
@@ -315,7 +345,20 @@ export const postPurchaseReturn = async (req: Request, res: Response) => {
             }
 
             const netCost = calcSubtotal - calcDiscount;
-            const calcAmount = Number(purchase.totalAmount || (netCost + calcTax));
+            const calcAmount = taxEnabled
+                ? Number(purchase.totalAmount || (netCost + calcTax))
+                : netCost;
+
+            if (!taxEnabled) {
+                await tx
+                    .update(transactions)
+                    .set({ totalTax: 0, totalAmount: calcAmount })
+                    .where(eq(transactions.id, id));
+                await tx
+                    .update(transactionDetails)
+                    .set({ taxRate: 0 })
+                    .where(eq(transactionDetails.transactionId, id));
+            }
 
             const journalBranchId = await resolveBranchId(purchase.branchId, req);
             const journalBranchCode = await resolveBranchCodeFromId(journalBranchId);
