@@ -10,7 +10,19 @@ import {
     transactions,
     warehouses,
 } from "@/db/schemas";
-import { and, asc, desc, eq, inArray, like, or, sql, gte, lte, gt } from "drizzle-orm";
+import {
+    and,
+    asc,
+    desc,
+    eq,
+    inArray,
+    like,
+    or,
+    sql,
+    gte,
+    lte,
+    ne,
+} from "drizzle-orm";
 import { PgColumn } from "drizzle-orm/pg-core";
 import { Request, Response } from "express";
 import { branchScope, productBranchFilter } from "@/helpers/branch.helper";
@@ -27,7 +39,8 @@ export const getMonitoringStock = async (req: Request, res: Response) => {
     const sortKey = (query.sort as string) ?? "productName";
     const search = (query.search as string) ?? "";
     const warehouseId = query.warehouseId as string | undefined;
-    const availableOnly = query.availableOnly === "true" || query.onlyAvailable === "true";
+    const availableOnly =
+        query.availableOnly === "true" || query.onlyAvailable === "true";
 
     const searchCondition = search
         ? or(
@@ -35,13 +48,21 @@ export const getMonitoringStock = async (req: Request, res: Response) => {
               like(sql`LOWER(${warehouses.name})`, `%${search.toLowerCase()}%`),
           )
         : undefined;
-    
-    const warehouseCondition = warehouseId ? eq(stocks.warehouseId, warehouseId) : undefined;
-    const availableCondition = availableOnly ? gt(stocks.qty, 0) : undefined;
+
+    const warehouseCondition = warehouseId
+        ? eq(stocks.warehouseId, warehouseId)
+        : undefined;
+    const availableCondition = availableOnly ? ne(stocks.qty, 0) : undefined;
     const branchCondition = branchScope(warehouses.branchId, req);
     const prodCondition = productBranchFilter(products, req);
-    const filterCondition = and(searchCondition, warehouseCondition, branchCondition, prodCondition, availableCondition);
-    
+    const filterCondition = and(
+        searchCondition,
+        warehouseCondition,
+        branchCondition,
+        prodCondition,
+        availableCondition,
+    );
+
     const order = (query.order as string) === "desc" ? "desc" : "asc";
     const sortColumn = sortColumns[sortKey] ?? products.name;
 
@@ -71,7 +92,13 @@ export const getMonitoringStock = async (req: Request, res: Response) => {
                     eq(productUnits.id, productDetails.unitId),
                 )
                 .where(filterCondition)
-                .groupBy(stocks.productId, products.name, warehouses.name, productUnits.name, productDetails.baseRatio)
+                .groupBy(
+                    stocks.productId,
+                    products.name,
+                    warehouses.name,
+                    productUnits.name,
+                    productDetails.baseRatio,
+                )
                 .orderBy(order === "desc" ? desc(sortColumn) : asc(sortColumn))
                 .limit(pageSize)
                 .offset(offset),
@@ -86,25 +113,35 @@ export const getMonitoringStock = async (req: Request, res: Response) => {
         ]);
 
         const productIds = stockList.map((s) => s.productId);
-        const allProductUnits = productIds.length > 0 ? await db
-            .select({
-                productId: productDetails.productId,
-                unitName: productUnits.name,
-                baseRatio: productDetails.baseRatio,
-            })
-            .from(productDetails)
-            .innerJoin(productUnits, eq(productUnits.id, productDetails.unitId))
-            .where(inArray(productDetails.productId, productIds))
-            .orderBy(desc(productDetails.baseRatio)) : [];
+        const allProductUnits =
+            productIds.length > 0
+                ? await db
+                      .select({
+                          productId: productDetails.productId,
+                          unitName: productUnits.name,
+                          baseRatio: productDetails.baseRatio,
+                      })
+                      .from(productDetails)
+                      .innerJoin(
+                          productUnits,
+                          eq(productUnits.id, productDetails.unitId),
+                      )
+                      .where(inArray(productDetails.productId, productIds))
+                      .orderBy(desc(productDetails.baseRatio))
+                : [];
 
         const rows = stockList.map((stock) => {
-            const units = allProductUnits.filter((u) => u.productId === stock.productId);
+            const units = allProductUnits.filter(
+                (u) => u.productId === stock.productId,
+            );
             const baseQty = Number(stock.baseQty);
             const primaryRatio = Number(stock.baseRatio) || 1;
-            
-            let remaining = baseQty;
+
+            const isNegative = baseQty < 0;
+            const absQty = Math.abs(baseQty);
+            let remaining = absQty;
             const decomposed: string[] = [];
-            
+
             for (const unit of units) {
                 const unitRatio = Number(unit.baseRatio);
                 const count = Math.floor(remaining / unitRatio + 0.0001);
@@ -113,17 +150,28 @@ export const getMonitoringStock = async (req: Request, res: Response) => {
                     remaining = Number((remaining % unitRatio).toFixed(4));
                 }
             }
-            
-            if (decomposed.length === 0 && baseQty > 0 && units.length > 0) {
+
+            if (decomposed.length === 0 && absQty > 0 && units.length > 0) {
                 const smallestUnit = units[units.length - 1];
-                const count = baseQty / Number(smallestUnit.baseRatio);
-                decomposed.push(`${count.toFixed(0)} ${smallestUnit.unitName}`);
+                const count = absQty / Number(smallestUnit.baseRatio);
+                const displayCount =
+                    count < 1 && count % 1 !== 0
+                        ? Number(count.toFixed(2))
+                        : count.toFixed(0);
+                if (Number(displayCount) > 0) {
+                    decomposed.push(`${displayCount} ${smallestUnit.unitName}`);
+                }
             }
+
+            const formattedDecomposed = decomposed.join(" ");
 
             return {
                 ...stock,
                 qty: baseQty / primaryRatio,
-                decomposed: decomposed.join(" "),
+                decomposed:
+                    isNegative && formattedDecomposed
+                        ? `-${formattedDecomposed}`
+                        : formattedDecomposed,
             };
         });
 
@@ -192,12 +240,18 @@ export const getMovementStocks = async (req: Request, res: Response) => {
     const sortColumn = sortColumns[sortKey] ?? transactions.date;
 
     const productId = (query.productId || query.product) as string | undefined;
-    const warehouseId = (query.warehouseId || query.warehouse) as string | undefined;
+    const warehouseId = (query.warehouseId || query.warehouse) as
+        | string
+        | undefined;
     const contactId = (query.contactId || query.contact) as string | undefined;
     const from = (query.from || query.startDate) as string | undefined;
     const to = (query.to || query.endDate) as string | undefined;
 
-    const fromDate = from ? (from.includes("T") ? from.split("T")[0] : from) : undefined;
+    const fromDate = from
+        ? from.includes("T")
+            ? from.split("T")[0]
+            : from
+        : undefined;
     const toDate = to ? (to.includes("T") ? to.split("T")[0] : to) : undefined;
 
     const conditions = [
@@ -276,49 +330,84 @@ export const getMovementStocks = async (req: Request, res: Response) => {
                 .where(filterCondition),
         ]);
 
-        const productIds = Array.from(new Set(stockMovementList.map((s) => s.productId)));
-        const allProductUnits = productIds.length > 0 ? await db
-            .select({
-                productId: productDetails.productId,
-                unitName: productUnits.name,
-                baseRatio: productDetails.baseRatio,
-            })
-            .from(productDetails)
-            .innerJoin(productUnits, eq(productUnits.id, productDetails.unitId))
-            .where(inArray(productDetails.productId, productIds))
-            .orderBy(desc(productDetails.baseRatio)) : [];
+        const productIds = Array.from(
+            new Set(stockMovementList.map((s) => s.productId)),
+        );
+        const allProductUnits =
+            productIds.length > 0
+                ? await db
+                      .select({
+                          productId: productDetails.productId,
+                          unitName: productUnits.name,
+                          baseRatio: productDetails.baseRatio,
+                      })
+                      .from(productDetails)
+                      .innerJoin(
+                          productUnits,
+                          eq(productUnits.id, productDetails.unitId),
+                      )
+                      .where(inArray(productDetails.productId, productIds))
+                      .orderBy(desc(productDetails.baseRatio))
+                : [];
 
         // Fetch transaction details to know the actual unit used
-        const transactionIds = stockMovementList.map(s => s.transactionId);
-        const tDetails = transactionIds.length > 0 ? await db
-            .select({
-                transactionId: transactionDetails.transactionId,
-                productId: transactionDetails.productId,
-                unitName: productUnits.name,
-                baseRatio: transactionDetails.baseRatio,
-                qty: transactionDetails.qty,
-            })
-            .from(transactionDetails)
-            .innerJoin(productDetails, eq(productDetails.id, transactionDetails.productDetailId))
-            .innerJoin(productUnits, eq(productUnits.id, productDetails.unitId))
-            .where(inArray(transactionDetails.transactionId, transactionIds)) : [];
+        const transactionIds = stockMovementList.map((s) => s.transactionId);
+        const tDetails =
+            transactionIds.length > 0
+                ? await db
+                      .select({
+                          transactionId: transactionDetails.transactionId,
+                          productId: transactionDetails.productId,
+                          unitName: productUnits.name,
+                          baseRatio: transactionDetails.baseRatio,
+                          qty: transactionDetails.qty,
+                      })
+                      .from(transactionDetails)
+                      .innerJoin(
+                          productDetails,
+                          eq(
+                              productDetails.id,
+                              transactionDetails.productDetailId,
+                          ),
+                      )
+                      .innerJoin(
+                          productUnits,
+                          eq(productUnits.id, productDetails.unitId),
+                      )
+                      .where(
+                          inArray(
+                              transactionDetails.transactionId,
+                              transactionIds,
+                          ),
+                      )
+                : [];
 
         const rows = stockMovementList.map((mov) => {
-            const units = allProductUnits.filter((u) => u.productId === mov.productId);
+            const units = allProductUnits.filter(
+                (u) => u.productId === mov.productId,
+            );
             const smallestUnit = units[units.length - 1];
-            
+
             // Find the specific transaction detail
-            const detail = tDetails.find(d => 
-                d.transactionId === mov.transactionId && 
-                d.productId === mov.productId &&
-                Math.abs(Number(d.qty) * Number(d.baseRatio) - Math.abs(Number(mov.baseQty))) < 0.001
+            const detail = tDetails.find(
+                (d) =>
+                    d.transactionId === mov.transactionId &&
+                    d.productId === mov.productId &&
+                    Math.abs(
+                        Number(d.qty) * Number(d.baseRatio) -
+                            Math.abs(Number(mov.baseQty)),
+                    ) < 0.001,
             );
 
-            const actualUnitQty = detail ? `${Number(detail.qty)} ${detail.unitName}` : `${mov.baseQty} ${mov.defaultUnitName}`;
-            
+            const actualUnitQty = detail
+                ? `${Number(detail.qty)} ${detail.unitName}`
+                : `${mov.baseQty} ${mov.defaultUnitName}`;
+
             let smallestUnitQty = "";
             if (smallestUnit) {
-                const count = Math.abs(Number(mov.baseQty)) / Number(smallestUnit.baseRatio);
+                const count =
+                    Math.abs(Number(mov.baseQty)) /
+                    Number(smallestUnit.baseRatio);
                 smallestUnitQty = `${count.toFixed(0)} ${smallestUnit.unitName}`;
             }
 
