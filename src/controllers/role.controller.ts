@@ -179,7 +179,11 @@ export const updatePermissions = async (req: Request, res: Response) => {
                 ),
             )
             .limit(1);
-        const [roleRecord] = await db.select({ name: roles.name }).from(roles).where(eq(roles.id, roleId)).limit(1);
+        const [roleRecord] = await db
+            .select({ name: roles.name })
+            .from(roles)
+            .where(eq(roles.id, roleId))
+            .limit(1);
         const roleName = roleRecord?.name || roleId;
         if (existing.length > 0) {
             const record = existing[0];
@@ -256,7 +260,18 @@ export const getPaginatedRoles = async (req: Request, res: Response) => {
 
         const [roleList, totalCount] = await Promise.all([
             db
-                .select()
+                .select({
+                    id: roles.id,
+                    name: roles.name,
+                    // Use Drizzle's built-in $count subquery helper with conditions
+                    permissionsCount: db.$count(
+                        rolePermissions,
+                        and(
+                            eq(rolePermissions.roleId, roles.id),
+                            eq(rolePermissions.hasPermission, true),
+                        ),
+                    ),
+                })
                 .from(roles)
                 .where(searchCondition)
                 .orderBy(order === "desc" ? desc(sortColumn) : asc(sortColumn))
