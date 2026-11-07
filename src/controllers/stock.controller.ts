@@ -26,6 +26,7 @@ import {
 import { PgColumn } from "drizzle-orm/pg-core";
 import { Request, Response } from "express";
 import { branchScope, productBranchFilter } from "@/helpers/branch.helper";
+import { decomposeQuantity } from "@/helpers/quantity.helper";
 
 export const getMonitoringStock = async (req: Request, res: Response) => {
     const query = req.query;
@@ -76,6 +77,7 @@ export const getMonitoringStock = async (req: Request, res: Response) => {
                     unitName: productUnits.name,
                     baseRatio: productDetails.baseRatio,
                     baseQty: sql<number>`sum(${stocks.qty})`,
+                    reorderLevel: products.reorderLevel,
                 })
                 .from(stocks)
                 .innerJoin(products, eq(stocks.productId, products.id))
@@ -98,6 +100,7 @@ export const getMonitoringStock = async (req: Request, res: Response) => {
                     warehouses.name,
                     productUnits.name,
                     productDetails.baseRatio,
+                    products.reorderLevel,
                 )
                 .orderBy(order === "desc" ? desc(sortColumn) : asc(sortColumn))
                 .limit(pageSize)
@@ -137,41 +140,11 @@ export const getMonitoringStock = async (req: Request, res: Response) => {
             const baseQty = Number(stock.baseQty);
             const primaryRatio = Number(stock.baseRatio) || 1;
 
-            const isNegative = baseQty < 0;
-            const absQty = Math.abs(baseQty);
-            let remaining = absQty;
-            const decomposed: string[] = [];
-
-            for (const unit of units) {
-                const unitRatio = Number(unit.baseRatio);
-                const count = Math.floor(remaining / unitRatio + 0.0001);
-                if (count > 0) {
-                    decomposed.push(`${count} ${unit.unitName}`);
-                    remaining = Number((remaining % unitRatio).toFixed(4));
-                }
-            }
-
-            if (decomposed.length === 0 && absQty > 0 && units.length > 0) {
-                const smallestUnit = units[units.length - 1];
-                const count = absQty / Number(smallestUnit.baseRatio);
-                const displayCount =
-                    count < 1 && count % 1 !== 0
-                        ? Number(count.toFixed(2))
-                        : count.toFixed(0);
-                if (Number(displayCount) > 0) {
-                    decomposed.push(`${displayCount} ${smallestUnit.unitName}`);
-                }
-            }
-
-            const formattedDecomposed = decomposed.join(" ");
-
             return {
                 ...stock,
                 qty: baseQty / primaryRatio,
-                decomposed:
-                    isNegative && formattedDecomposed
-                        ? `-${formattedDecomposed}`
-                        : formattedDecomposed,
+                reorderLevel: Number(stock.reorderLevel),
+                decomposed: decomposeQuantity(baseQty, units),
             };
         });
 

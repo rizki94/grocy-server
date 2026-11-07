@@ -1,8 +1,17 @@
 import { db } from "@/db";
-import { transactions, stocks, openInvoices, products, warehouses } from "@/db/schemas";
-import { and, eq, gte, sql, desc } from "drizzle-orm";
+import {
+    transactions,
+    stocks,
+    openInvoices,
+    products,
+    warehouses,
+    productDetails,
+    productUnits,
+} from "@/db/schemas";
+import { and, eq, gte, sql, desc, inArray } from "drizzle-orm";
 import { Request, Response } from "express";
 import { branchScope, productBranchFilter } from "@/helpers/branch.helper";
+import { decomposeQuantity } from "@/helpers/quantity.helper";
 
 export const getDashboardStats = async (req: Request, res: Response) => {
     try {
@@ -143,6 +152,24 @@ export const getDashboardStats = async (req: Request, res: Response) => {
             .having(sql`SUM(${stocks.qty}) < ${products.reorderLevel}`)
             .limit(5);
 
+        const lowStockProductIds = lowStockItems.map((item) => item.productId);
+        const lowStockUnits =
+            lowStockProductIds.length > 0
+                ? await db
+                      .select({
+                          productId: productDetails.productId,
+                          unitName: productUnits.name,
+                          baseRatio: productDetails.baseRatio,
+                      })
+                      .from(productDetails)
+                      .innerJoin(
+                          productUnits,
+                          eq(productUnits.id, productDetails.unitId),
+                      )
+                      .where(inArray(productDetails.productId, lowStockProductIds))
+                      .orderBy(desc(productDetails.baseRatio))
+                : [];
+
         // Recent transactions
         const recentTransactions = await db
             .select({
@@ -195,6 +222,12 @@ export const getDashboardStats = async (req: Request, res: Response) => {
                 productId: item.productId,
                 name: item.name,
                 qty: Number(item.qty),
+                decomposed: decomposeQuantity(
+                    Number(item.qty),
+                    lowStockUnits.filter(
+                        (unit) => unit.productId === item.productId,
+                    ),
+                ),
                 reorderLevel: Number(item.reorderLevel),
             })),
             recentTransactions: recentTransactions.map((t) => ({

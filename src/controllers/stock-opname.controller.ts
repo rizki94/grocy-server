@@ -133,9 +133,16 @@ export async function getStockOpnameById(req: Request, res: Response) {
                     with: {
                         product: {
                             columns: { id: true, name: true },
+                            with: {
+                                details: {
+                                    with: {
+                                        unit: { columns: { id: true, name: true, abbreviation: true } },
+                                    },
+                                },
+                            },
                         },
                         productDetail: {
-                            columns: { id: true, skuId: true, barcode: true },
+                            columns: { id: true, skuId: true, barcode: true, baseRatio: true, cost: true },
                             with: {
                                 unit: { columns: { id: true, name: true, abbreviation: true } },
                             },
@@ -150,7 +157,25 @@ export async function getStockOpnameById(req: Request, res: Response) {
         });
 
         if (!opname) return res.status(404).json({ message: "Stock opname not found" });
-        return res.json(opname);
+
+        // Ensure each item references the base unit detail (baseRatio === 1) to match systemQty (which is always in base unit)
+        const sanitizedItems = opname.items.map((item) => {
+            const baseDetail =
+                item.product?.details?.find((d: any) => Number(d.baseRatio) === 1) ||
+                item.productDetail;
+
+            return {
+                ...item,
+                productDetailId: baseDetail?.id || item.productDetailId,
+                productDetail: baseDetail || item.productDetail,
+                unitCost: Number(baseDetail?.cost ?? item.unitCost ?? 0),
+            };
+        });
+
+        return res.json({
+            ...opname,
+            items: sanitizedItems,
+        });
     } catch (err) {
         console.error("[getStockOpnameById]", err);
         return res.status(500).json({ message: "Failed to fetch stock opname" });
@@ -254,8 +279,8 @@ export async function createStockOpname(req: Request, res: Response) {
             // For each target product, map existing stock rows, or create a 0-qty baseline row
             for (const prod of targetProducts) {
                 const baseDetail =
+                    prod.details.find((d) => Number(d.baseRatio) === 1) ||
                     prod.details.find((d) => d.isDefault) ||
-                    prod.details.find((d) => d.level === 1) ||
                     prod.details[0];
 
                 if (!baseDetail) continue;

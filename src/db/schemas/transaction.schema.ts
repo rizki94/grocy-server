@@ -49,7 +49,9 @@ export const transactions = pgTable("transactions", {
     userId: uuid("user_id")
         .notNull()
         .references(() => users.id),
-    branchId: uuid("branch_id").references(() => branches.id),
+    branchId: uuid("branch_id")
+        .references(() => branches.id)
+        .notNull(),
     parentId: uuid("parent_id").references((): any => transactions.id),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
@@ -135,4 +137,3 @@ export const transactionDetailsRelations = relations(
         }),
     }),
 );
-

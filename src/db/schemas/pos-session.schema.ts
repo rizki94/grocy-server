@@ -15,7 +15,9 @@ export const posSessions = pgTable("pos_sessions", {
     userId: uuid("user_id")
         .notNull()
         .references(() => users.id),
-    branchId: uuid("branch_id").references(() => branches.id),
+    branchId: uuid("branch_id")
+        .notNull()
+        .references(() => branches.id),
     status: posSessionStatusEnum("status").notNull().default("open"),
     openingBalance: decimalAsNumber(12, 2)("opening_balance")
         .notNull()

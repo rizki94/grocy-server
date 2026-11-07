@@ -22,7 +22,9 @@ export const deliveryStatusEnum = pgEnum("delivery_status", [
 export const deliveries = pgTable("deliveries", {
     id: uuid("id").defaultRandom().primaryKey(),
     loadNumber: text("load_number"),
-    branchId: uuid("branch_id").references(() => branches.id),
+    branchId: uuid("branch_id")
+        .notNull()
+        .references(() => branches.id),
     deliveryDate: date("delivery_date").notNull(),
     driverId: uuid("driver_id")
         .notNull()

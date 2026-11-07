@@ -83,6 +83,7 @@ export const productDetailPrices = pgTable(
             .notNull()
             .references(() => priceGroups.id, { onDelete: "cascade" }),
         branchId: uuid("branch_id")
+            .notNull()
             .references(() => branches.id, { onDelete: "cascade" }),
         price: decimalAsNumber(12, 2)("price").notNull().default(0),
         createdAt: timestamp("created_at").defaultNow().notNull(),

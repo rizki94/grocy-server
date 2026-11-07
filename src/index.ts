@@ -1,9 +1,3 @@
-import moduleAlias from "module-alias";
-import path from "path";
-
-// Automatically resolve @ to src in development (tsx) or dist in compiled build
-(moduleAlias as any).addAlias("@", path.resolve(__dirname));
-
 import "dotenv/config";
 import express from "express";
 import { route } from "./route";
@@ -16,6 +10,8 @@ import { branchMiddleware } from "./middleware/branch";
 
 import { logger } from "./logger";
 import pinoHttp from "pino-http";
+import { db } from "./db";
+import { sql } from "drizzle-orm";
 
 const app = express();
 app.set("etag", false);
@@ -56,6 +52,15 @@ app.use(corsMiddleware);
 app.use(sessionMiddleware);
 app.use(passportMiddleware);
 app.use(branchMiddleware);
+
+app.get("/healthz", async (_req, res) => {
+    try {
+        await db.execute(sql`SELECT 1`);
+        res.status(200).json({ status: "healthy", timestamp: new Date().toISOString() });
+    } catch (err: any) {
+        res.status(503).json({ status: "unhealthy", error: err.message });
+    }
+});
 
 app.use("/api", route);
 app.use("/uploads", express.static("uploads"));

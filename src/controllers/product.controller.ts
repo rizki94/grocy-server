@@ -12,7 +12,11 @@ import {
     productBranches,
     warehouses,
 } from "@/db/schemas";
-import { branchScope, productBranchFilter } from "@/helpers/branch.helper";
+import {
+    branchScope,
+    getHqBranchId,
+    productBranchFilter,
+} from "@/helpers/branch.helper";
 import { logAction } from "@/utils/log-helper";
 import { CacheService } from "@/services/cache-service";
 import {
@@ -57,9 +61,12 @@ export async function getActiveProducts(req: Request, res: Response) {
 
         const data = await db
             .select({
-                id: products.id,
+                id: productDetails.id,
+                productId: products.id,
                 productDetailId: productDetails.id,
                 name: products.name,
+                barcode: productDetails.barcode,
+                skuId: productDetails.skuId,
                 unitId: productDetails.unitId,
                 unitName: sql<string>`COALESCE(${productUnits.name}, 'None')`,
                 baseRatio: sql<number>`COALESCE(${productDetails.baseRatio}, 1)`,
@@ -280,6 +287,7 @@ export const createProduct = async (req: Request, res: Response) => {
     const product = parsed.data;
 
     try {
+        const globalPriceBranchId = await getHqBranchId();
         const [createdProduct] = await db
             .insert(products)
             .values({
@@ -330,6 +338,7 @@ export const createProduct = async (req: Request, res: Response) => {
                     d.prices.map((p) => ({
                         productDetailId: createdDetail.id,
                         priceGroupId: p.priceGroupId,
+                        branchId: globalPriceBranchId,
                         price: p.price,
                     })),
                 );
@@ -389,6 +398,7 @@ export const updateProduct = async (req: Request, res: Response) => {
     const product = parsed.data;
 
     try {
+        const globalPriceBranchId = await getHqBranchId();
         const [existing] = await db
             .select()
             .from(products)
@@ -541,6 +551,7 @@ export const updateProduct = async (req: Request, res: Response) => {
                         await db.insert(productDetailPrices).values({
                             productDetailId: detailId,
                             priceGroupId: p.priceGroupId,
+                            branchId: globalPriceBranchId,
                             price: p.price,
                         });
                     }

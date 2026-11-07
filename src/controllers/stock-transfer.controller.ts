@@ -77,7 +77,7 @@ export const createTransfer = async (req: Request, res: Response) => {
         const [created] = await db
             .insert(transactions)
             .values(
-                withBranch({
+                await withBranch({
                     ...transfer,
                     invoice,
                     type: "transfer_stock",

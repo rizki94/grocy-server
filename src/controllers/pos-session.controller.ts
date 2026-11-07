@@ -1,9 +1,10 @@
 import { db } from "@/db";
-import { posSessions, transactions, users } from "@/db/schemas";
+import { posSessions, transactions, users, payments, paymentLines, openInvoices, contacts } from "@/db/schemas";
 import { Request, Response } from "express";
-import { eq, and, isNull, desc, sql } from "drizzle-orm";
+import { eq, and, isNull, desc, sql, or, ne, exists } from "drizzle-orm";
 import { logAction } from "@/utils/log-helper";
 import { getAccountBalance } from "@/repositories/gl-account.repository";
+import { resolveBranchId } from "@/helpers/branch.helper";
 
 export async function getAllSessions(req: Request, res: Response) {
     try {
@@ -51,34 +52,160 @@ export async function getSessionSummary(req: Request, res: Response) {
         const summary = await db
             .select({
                 count: sql<number>`count(*)`,
-                totalAmount: sql<number>`sum(total_amount)`,
-                totalTax: sql<number>`sum(total_tax)`,
-                totalDiscount: sql<number>`sum(total_discount)`,
+                totalAmount: sql<number>`COALESCE(sum(total_amount), 0)`,
+                totalTax: sql<number>`COALESCE(sum(total_tax), 0)`,
+                totalDiscount: sql<number>`COALESCE(sum(total_discount), 0)`,
             })
             .from(transactions)
             .where(eq(transactions.posSessionId, id))
             .then((r) => r[0]);
 
-        // 3. Get payment breakdown
-        const paymentBreakdown = await db
+        const totalSales = Number(summary?.totalAmount || 0);
+
+        // 3. Unpaid credit sales (Tempo / Bon) originated in this session
+        const openInvoicesInSession = await db
             .select({
-                method: transactions.reference,
-                total: sql<number>`sum(total_amount)`,
+                totalAmount: sql<number>`COALESCE(SUM(${openInvoices.amount}), 0)::float`,
+                paidAmount: sql<number>`COALESCE(SUM(${openInvoices.paidAmount}), 0)::float`,
             })
-            .from(transactions)
+            .from(openInvoices)
+            .innerJoin(transactions, eq(openInvoices.transactionId, transactions.id))
             .where(eq(transactions.posSessionId, id))
-            .groupBy(transactions.reference);
+            .then((r) => r[0]);
+
+        const creditSalesUnpaid = Math.max(
+            0,
+            Number(openInvoicesInSession?.totalAmount || 0) -
+                Number(openInvoicesInSession?.paidAmount || 0),
+        );
+
+        // 4. Payments received in this session:
+        // A) Payments directly tagged with posSessionId (includes settlements and checkouts)
+        // B) Or payments through openInvoices where transaction.posSessionId = id (backward compat)
+        const sessionPayments = await db
+            .select({
+                method: sql<string>`COALESCE(${payments.reference}, 'Cash')`,
+                total: sql<number>`COALESCE(SUM(${payments.totalAmount}), 0)::float`,
+            })
+            .from(payments)
+            .where(
+                or(
+                    eq(payments.posSessionId, id),
+                    exists(
+                        db
+                            .select()
+                            .from(paymentLines)
+                            .innerJoin(
+                                openInvoices,
+                                eq(paymentLines.openInvoiceId, openInvoices.id),
+                            )
+                            .innerJoin(
+                                transactions,
+                                eq(openInvoices.transactionId, transactions.id),
+                            )
+                            .where(
+                                and(
+                                    eq(paymentLines.paymentId, payments.id),
+                                    eq(transactions.posSessionId, id),
+                                    isNull(payments.posSessionId),
+                                ),
+                            ),
+                    ),
+                ),
+            )
+            .groupBy(sql`COALESCE(${payments.reference}, 'Cash')`);
+
+        // 5. Separate settlement payments (pelunasan nota luar sesi yang diterima di sesi ini)
+        const settlementsInSession = await db
+            .select({
+                method: sql<string>`COALESCE(${payments.reference}, 'Cash')`,
+                total: sql<number>`COALESCE(SUM(${payments.totalAmount}), 0)::float`,
+            })
+            .from(payments)
+            .innerJoin(paymentLines, eq(paymentLines.paymentId, payments.id))
+            .innerJoin(openInvoices, eq(paymentLines.openInvoiceId, openInvoices.id))
+            .leftJoin(transactions, eq(openInvoices.transactionId, transactions.id))
+            .where(
+                and(
+                    eq(payments.posSessionId, id),
+                    or(
+                        ne(transactions.posSessionId, id),
+                        isNull(transactions.posSessionId),
+                    ),
+                ),
+            )
+            .groupBy(sql`COALESCE(${payments.reference}, 'Cash')`);
+
+        const totalSettlements = settlementsInSession.reduce(
+            (sum, s) => sum + Number(s.total || 0),
+            0,
+        );
+
+        let paymentBreakdown = [...sessionPayments];
+        if (!paymentBreakdown || paymentBreakdown.length === 0) {
+            paymentBreakdown = await db
+                .select({
+                    method: sql<string>`COALESCE(${transactions.reference}, 'Cash')`,
+                    total: sql<number>`COALESCE(SUM(${transactions.totalAmount}), 0)::float`,
+                })
+                .from(transactions)
+                .where(eq(transactions.posSessionId, id))
+                .groupBy(sql`COALESCE(${transactions.reference}, 'Cash')`);
+        }
+
+        // Add credit sales (Tempo) to breakdown if any
+        if (creditSalesUnpaid > 0) {
+            paymentBreakdown.push({
+                method: "Tempo / Bon (Piutang)",
+                total: creditSalesUnpaid,
+            });
+        }
+
+        const cashCollected = (paymentBreakdown || [])
+            .filter((p) => {
+                const m = (p.method || "").toLowerCase();
+                return (
+                    (m.includes("cash") || m.includes("tunai") || m.includes("kas")) &&
+                    !m.includes("tempo") &&
+                    !m.includes("bon") &&
+                    !m.includes("piutang")
+                );
+            })
+            .reduce((sum, p) => sum + Number(p.total || 0), 0);
+
+        const expectedCash = Number(session.openingBalance || 0) + cashCollected;
 
         const transactionsList = await db
-            .select()
+            .select({
+                id: transactions.id,
+                invoice: transactions.invoice,
+                date: transactions.date,
+                subtotal: transactions.subtotal,
+                totalDiscount: transactions.totalDiscount,
+                totalTax: transactions.totalTax,
+                totalAmount: transactions.totalAmount,
+                status: transactions.status,
+                reference: transactions.reference,
+                createdAt: transactions.createdAt,
+                customerName: contacts.name,
+            })
             .from(transactions)
+            .leftJoin(contacts, eq(transactions.contactId, contacts.id))
             .where(eq(transactions.posSessionId, id))
             .orderBy(desc(transactions.createdAt));
 
         res.status(200).json({
             session,
-            summary,
+            summary: {
+                ...summary,
+                totalAmount: totalSales,
+                creditSales: creditSalesUnpaid,
+                totalSettlements,
+                cashCollected,
+                expectedCash,
+            },
             paymentBreakdown,
+            settlements: settlementsInSession,
             transactions: transactionsList,
         });
     } catch (error) {
@@ -181,6 +308,10 @@ export async function openSession(req: Request, res: Response) {
             .insert(posSessions)
             .values({
                 userId,
+                branchId: await resolveBranchId(
+                    req.activeBranchId || user?.branchId,
+                    req,
+                ),
                 openingBalance,
                 status: "open",
                 openedAt: new Date(),

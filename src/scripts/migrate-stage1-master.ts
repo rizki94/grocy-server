@@ -476,7 +476,7 @@ async function main() {
                 await db.insert(productDetailPrices).values({
                     productDetailId: detail.id,
                     priceGroupId: priceGroupA.id,
-                    branchId: null, // Global price across branches
+                    branchId: hqBranch.id,
                     price: priceA,
                 });
             } else {

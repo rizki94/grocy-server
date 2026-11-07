@@ -27,7 +27,9 @@ export const bankReconciliations = pgTable("bank_reconciliations", {
     difference: decimalAsNumber(12, 2)("difference").notNull().default(0),
     status: bankReconciliationStatusEnum("status").notNull().default("draft"),
     note: text("note"),
-    branchId: uuid("branch_id").references(() => branches.id),
+    branchId: uuid("branch_id")
+        .notNull()
+        .references(() => branches.id),
     createdBy: uuid("created_by").notNull().references(() => users.id),
     reconciledBy: uuid("reconciled_by").references(() => users.id),
     reconciledAt: timestamp("reconciled_at"),

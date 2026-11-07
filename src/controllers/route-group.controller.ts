@@ -6,6 +6,7 @@ import { routeGroupInsertSchema, routeGroupUpdateSchema } from "@/validators/rou
 import { and, asc, desc, eq, like, or, sql } from "drizzle-orm";
 import { PgColumn } from "drizzle-orm/pg-core";
 import { Request, Response } from "express";
+import { withBranch } from "@/helpers/branch.helper";
 
 export async function getAllRouteGroups(req: Request, res: Response) {
     try {
@@ -74,7 +75,7 @@ export const createRouteGroup = async (req: Request, res: Response) => {
 
         const [createdGroup] = await db
             .insert(routeGroups)
-            .values(parsed.data)
+            .values(await withBranch(parsed.data, req))
             .returning();
 
         logAction(req, {

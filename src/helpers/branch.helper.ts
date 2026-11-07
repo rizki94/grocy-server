@@ -20,8 +20,13 @@ export async function getDefaultBranchId(): Promise<string> {
         .select({ id: branches.id })
         .from(branches)
         .limit(1);
-    return first?.id || "";
+    if (!first) {
+        throw new Error("Cannot resolve a branch because no branches exist");
+    }
+    return first.id;
 }
+
+export const getHqBranchId = getDefaultBranchId;
 
 export async function resolveBranchId(
     explicitBranchId?: string | null,
@@ -78,14 +83,12 @@ export function branchScope(column: any, req: Request): SQL | undefined {
 /**
  * Injects branchId into data object for insert / create operations.
  */
-export function withBranch<T extends Record<string, any>>(data: T, req: Request): T & { branchId?: string } {
-    if (data.branchId) {
-        return data;
-    }
-    const targetBranchId = req.activeBranchId || (req.user as any)?.branchId;
-    if (!targetBranchId) {
-        return data;
-    }
+export async function withBranch<T extends Record<string, any>>(
+    data: T,
+    req: Request,
+): Promise<T & { branchId: string }> {
+    const targetBranchId =
+        data.branchId || (await resolveBranchId(undefined, req));
     return {
         ...data,
         branchId: targetBranchId,

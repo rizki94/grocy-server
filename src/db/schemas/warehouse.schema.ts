@@ -10,7 +10,9 @@ import { branches } from "./branch.schema";
 export const warehouses = pgTable("warehouses", {
     id: uuid("id").defaultRandom().primaryKey(),
     name: text("name").notNull().unique(),
-    branchId: uuid("branch_id").references(() => branches.id),
+    branchId: uuid("branch_id")
+        .notNull()
+        .references(() => branches.id),
     address: text("address"),
     phone: text("phone"),
     isActive: boolean("is_active").notNull().default(true),

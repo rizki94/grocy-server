@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { db } from "@/db";
 import { trucks } from "@/db/schemas";
 import { eq, desc } from "drizzle-orm";
+import { withBranch } from "@/helpers/branch.helper";
 
 export const getTrucks = async (req: Request, res: Response) => {
     try {
@@ -26,13 +27,13 @@ export const createTruck = async (req: Request, res: Response) => {
 
         const [created] = await db
             .insert(trucks)
-            .values({
+            .values(await withBranch({
                 name,
                 licensePlate,
                 maxWeight: Number(maxWeight || 0),
                 maxVolume: Number(maxVolume || 0),
                 isActive: isActive !== undefined ? Boolean(isActive) : true,
-            })
+            }, req))
             .returning();
 
         return res.status(201).json({ message: "Truck created successfully", truck: created });

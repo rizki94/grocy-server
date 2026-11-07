@@ -9,7 +9,11 @@ import {
     users,
 } from "@/db/schemas";
 import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
-import { branchScope, resolveBranchCodeFromId } from "@/helpers/branch.helper";
+import {
+    branchScope,
+    resolveBranchCodeFromId,
+    resolveBranchId,
+} from "@/helpers/branch.helper";
 import { generateJournalInvoice } from "@/helpers/generate-invoice";
 import { logAction } from "@/utils/log-helper";
 import { AppError } from "@/middleware/error-handler";
@@ -334,7 +338,7 @@ export const executePeriodClosing = async (req: Request, res: Response) => {
             });
         }
 
-        const branchId = req.activeBranchId || (req.user as any)?.branchId || null;
+        const branchId = await resolveBranchId(undefined, req);
         const branchCode = await resolveBranchCodeFromId(branchId);
 
         // Check for unposted draft journals

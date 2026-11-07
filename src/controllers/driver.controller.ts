@@ -63,7 +63,7 @@ export const createDriver = async (req: Request, res: Response) => {
         const [created] = await db
             .insert(drivers)
             .values(
-                withBranch({
+                await withBranch({
                     name,
                     color: chosenColor,
                     defaultTruckId: defaultTruckId || null,

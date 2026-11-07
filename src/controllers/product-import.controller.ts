@@ -10,6 +10,7 @@ import {
 import { logAction } from "@/utils/log-helper";
 import { eq } from "drizzle-orm";
 import { Request, Response } from "express";
+import { getHqBranchId } from "@/helpers/branch.helper";
 import ExcelJS from "exceljs";
 import multer from "multer";
 
@@ -453,6 +454,7 @@ export const importProducts = async (req: Request, res: Response) => {
         }
 
         const createdIds: string[] = [];
+        const globalPriceBranchId = await getHqBranchId();
 
         await db.transaction(async (tx) => {
             for (const [productName, detailRows] of grouped) {
@@ -506,6 +508,7 @@ export const importProducts = async (req: Request, res: Response) => {
                             dr.prices.map((p) => ({
                                 productDetailId: createdDetail.id,
                                 priceGroupId: p.priceGroupId,
+                                branchId: globalPriceBranchId,
                                 price: p.price,
                             }))
                         );

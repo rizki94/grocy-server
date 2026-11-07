@@ -16,6 +16,7 @@
 import sql from "mssql";
 import { db } from "../db";
 import { eq } from "drizzle-orm";
+import { resolveBranchId } from "../helpers/branch.helper";
 import {
     branches,
     contacts,
@@ -231,13 +232,14 @@ async function main() {
         }
 
         try {
+            const resolvedBranchId = await resolveBranchId(branch?.id);
             await db.transaction(async (tx) => {
                 // 1. Insert payment header
                 const [payment] = await tx
                     .insert(payments)
                     .values({
                         contactId: contact?.id ?? null,
-                        branchId: branch?.id ?? null,
+                        branchId: resolvedBranchId,
                         date: dateStr,
                         type: paymentType,
                         totalAmount,
@@ -329,7 +331,7 @@ async function main() {
                         description: journalDesc,
                         status: "posted",
                         transactionId: null,
-                        branchId: branch?.id ?? null,
+                        branchId: resolvedBranchId,
                     })
                     .returning();
 

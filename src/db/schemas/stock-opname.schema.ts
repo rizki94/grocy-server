@@ -21,7 +21,9 @@ export const stockOpnames = pgTable("stock_opnames", {
     id: uuid("id").defaultRandom().primaryKey(),
     code: text("code").notNull().unique(),              // e.g. OPN-20261022-0001
     name: text("name").notNull(),                       // Human-readable name
-    branchId: uuid("branch_id").references(() => branches.id),
+    branchId: uuid("branch_id")
+        .notNull()
+        .references(() => branches.id),
     warehouseId: uuid("warehouse_id").references(() => warehouses.id),
     countDate: date("count_date").notNull(),
     status: stockOpnameStatusEnum("status").notNull().default("draft"),

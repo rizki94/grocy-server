@@ -6,7 +6,7 @@ import { warehouseInsertSchema, warehouseUpdateSchema } from "@/validators/wareh
 import { and, asc, desc, eq, like, or, sql } from "drizzle-orm";
 import { PgColumn } from "drizzle-orm/pg-core";
 import { Request, Response } from "express";
-import { branchScope, withBranch } from "@/helpers/branch.helper";
+import { branchScope, resolveBranchId, withBranch } from "@/helpers/branch.helper";
 
 export async function getAllWarehouses(req: Request, res: Response) {
     try {
@@ -79,7 +79,7 @@ export const createWarehouse = async (req: Request, res: Response) => {
 
         const [createdWarehouse] = await db
             .insert(warehouses)
-            .values(withBranch(parsed.data, req))
+            .values(await withBranch(parsed.data, req))
             .returning();
 
         logAction(req, {
@@ -130,7 +130,13 @@ export const updateWarehouse = async (req: Request, res: Response) => {
 
         const [updatedWarehouse] = await db
             .update(warehouses)
-            .set(parsed.data)
+            .set({
+                ...parsed.data,
+                branchId: await resolveBranchId(
+                    parsed.data.branchId ?? oldWarehouse.branchId,
+                    req,
+                ),
+            })
             .where(eq(warehouses.id, parsed.data.id))
             .returning();
 

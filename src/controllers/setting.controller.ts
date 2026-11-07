@@ -20,6 +20,8 @@ export const updateSettings = async (req: Request, res: Response) => {
     try {
         const {
             posRound2Digit,
+            posAllowTop,
+            posAllowDownPayment,
             allowNegativeStock,
             enableInventoryTracking,
             roundingDifferenceGlAccountId,
@@ -53,6 +55,8 @@ export const updateSettings = async (req: Request, res: Response) => {
 
         const valuesToSave = {
             posRound2Digit: Boolean(posRound2Digit),
+            posAllowTop: posAllowTop !== undefined ? Boolean(posAllowTop) : true,
+            posAllowDownPayment: posAllowDownPayment !== undefined ? Boolean(posAllowDownPayment) : true,
             allowNegativeStock: Boolean(allowNegativeStock),
             enableInventoryTracking: enableInventoryTracking ?? true,
             roundingDifferenceGlAccountId: roundingDifferenceGlAccountId ? roundingDifferenceGlAccountId : null,

@@ -20,7 +20,7 @@ import {
 import { generateInvoice, generateJournalInvoice } from "@/helpers/generate-invoice";
 import { updateStockForTransaction } from "@/repositories/stock.repository";
 import { Request, Response } from "express";
-import { eq, and, ilike, or } from "drizzle-orm";
+import { eq, and, ilike, or, sql } from "drizzle-orm";
 import { logAction } from "@/utils/log-helper";
 import { findGlAccountByCode } from "@/repositories/gl-account.repository";
 import { resolveBranchId, resolveBranchCode, resolveBranchCodeFromId } from "@/helpers/branch.helper";
@@ -57,6 +57,44 @@ export async function checkout(req: Request, res: Response) {
                 .json({ message: "Active POS session is required" });
         }
 
+        // 1.1 Idempotency Check: Prevent duplicate offline sync replay
+        if (req.body.offlineInvoice) {
+            const existing = await db
+                .select()
+                .from(transactions)
+                .where(
+                    and(
+                        eq(transactions.type, "pos_sales"),
+                        sql`${transactions.reference} LIKE ${`%${req.body.offlineInvoice}%`}`,
+                    ),
+                )
+                .limit(1)
+                .then((r) => r[0]);
+
+            if (existing) {
+                return res.status(200).json({
+                    ...existing,
+                    isIdempotentReplay: true,
+                    offlineInvoice: req.body.offlineInvoice,
+                    message: "Transaksi sudah tersimpan sebelumnya (idempotent replay)",
+                });
+            }
+        }
+
+        // 1.2 Price & Quantity Tamper Validation
+        for (const item of details) {
+            if (!item.qty || Number(item.qty) <= 0) {
+                return res
+                    .status(400)
+                    .json({ message: "Kuantitas barang harus lebih dari 0" });
+            }
+            if (Number(item.price) < 0) {
+                return res
+                    .status(400)
+                    .json({ message: "Harga jual barang tidak boleh negatif" });
+            }
+        }
+
         // 2. Get User for specific GL Account and Warehouse
         const user = await db
             .select()
@@ -65,15 +103,38 @@ export async function checkout(req: Request, res: Response) {
             .limit(1)
             .then((r) => r[0]);
 
-        // 3. Get Default Customer (General Customer)
-        const customer = await db
-            .select()
-            .from(contacts)
-            .where(eq(contacts.name, "General Customer"))
-            .limit(1)
-            .then((r) => r[0]);
+        // 3. Customer selection: from req.body.contactId or fallback to General Customer
+        let contactId = req.body.contactId;
+        let customer: any = null;
 
-        const contactId = customer?.id;
+        if (contactId) {
+            customer = await db
+                .select()
+                .from(contacts)
+                .where(eq(contacts.id, contactId))
+                .limit(1)
+                .then((r) => r[0]);
+        }
+
+        if (!customer) {
+            customer = await db
+                .select()
+                .from(contacts)
+                .where(eq(contacts.name, "General Customer"))
+                .limit(1)
+                .then((r) => r[0]);
+            contactId = customer?.id;
+        }
+
+        const termDays = Number(customer?.termOfPayment) || 0;
+        let calculatedDueDate = req.body.dueDate;
+        if (!calculatedDueDate) {
+            const d = new Date();
+            if (termDays > 0) {
+                d.setDate(d.getDate() + termDays);
+            }
+            calculatedDueDate = d.toISOString().split("T")[0];
+        }
 
         const result = await db.transaction(async (tx) => {
             const branchCode = await resolveBranchCode(req);
@@ -96,6 +157,38 @@ export async function checkout(req: Request, res: Response) {
                 roundingDifference = finalTotalAmount - originalTotalAmount;
             }
 
+            // Validate TOP / DP according to Global Settings
+            const isTempo =
+                paidAmount === 0 ||
+                (paymentMethod || "").toLowerCase().includes("tempo") ||
+                (paymentMethod || "").toLowerCase().includes("bon") ||
+                (paymentMethod || "").toLowerCase().includes("kredit") ||
+                (paymentMethod || "").toLowerCase().includes("top");
+
+            const isDownPayment =
+                paidAmount > 0 &&
+                paidAmount < finalTotalAmount &&
+                ((paymentMethod || "").toLowerCase().includes("down") ||
+                    (paymentMethod || "").toLowerCase().includes("deposit") ||
+                    (paymentMethod || "").toLowerCase().includes("titipan") ||
+                    (paymentMethod || "").toLowerCase().includes("dp"));
+
+            if (isTempo && globalSettings && globalSettings.posAllowTop === false) {
+                throw new Error(
+                    "Penjualan bertempo (TOP / Bon / Kredit) dinonaktifkan di pengaturan POS.",
+                );
+            }
+
+            if (
+                isDownPayment &&
+                globalSettings &&
+                globalSettings.posAllowDownPayment === false
+            ) {
+                throw new Error(
+                    "Penjualan Down Payment (DP / Uang Muka) dinonaktifkan di pengaturan POS.",
+                );
+            }
+
             // 4. Create Transaction
             const [transaction] = await tx
                 .insert(transactions)
@@ -110,8 +203,14 @@ export async function checkout(req: Request, res: Response) {
                     totalAmount: originalTotalAmount,
                     status: paidAmount >= finalTotalAmount ? "paid" : "order",
                     userId: req.user!.id,
+                    branchId: await resolveBranchId(undefined, req),
                     posSessionId,
-                    reference: paymentMethod,
+                    reference: req.body.offlineInvoice
+                        ? `${paymentMethod} [Offline Ref: ${req.body.offlineInvoice}]`
+                        : paymentMethod,
+                    note: req.body.offlineInvoice
+                        ? `Sinkronisasi transaksi offline (Ref: ${req.body.offlineInvoice})`
+                        : req.body.note,
                 })
                 .returning();
 
@@ -259,7 +358,7 @@ export async function checkout(req: Request, res: Response) {
                     contactId,
                     branchId: salesJournalBranchId,
                     type: "receivable",
-                    dueDate: new Date().toISOString().split("T")[0],
+                    dueDate: calculatedDueDate,
                     amount: originalTotalAmount,
                     paidAmount: paidAmount,
                     status:
@@ -279,6 +378,7 @@ export async function checkout(req: Request, res: Response) {
             for (const item of paymentItems) {
                 let itemAmount = Number(item.amount);
                 if (itemAmount <= 0) continue;
+                const activeMethodName = item.method;
 
                 // Cap the payment to the remaining total (including rounding)
                 // This handles cases where customer pays 51000 for a 50172 bill
@@ -292,16 +392,18 @@ export async function checkout(req: Request, res: Response) {
                     .insert(payments)
                     .values({
                         contactId,
+                        branchId: transaction.branchId,
                         date: new Date().toISOString().split("T")[0],
                         type: "receivable",
                         totalAmount: itemAmount,
                         status: "posted",
+                        reference: activeMethodName,
+                        posSessionId,
                     })
                     .returning();
 
                 // Record Payment Account (Ledger hit)
                 let glAccountId: string | null = null;
-                const activeMethodName = item.method;
 
                 const [method] = await tx
                     .select()
@@ -336,13 +438,24 @@ export async function checkout(req: Request, res: Response) {
                     // Priority 3: Ultimate fallbacks
                     const isCashLike =
                         method?.isCash ||
-                        activeMethodName?.toLowerCase() === "cash";
+                        activeMethodName?.toLowerCase() === "cash" ||
+                        activeMethodName?.toLowerCase().includes("cash") ||
+                        activeMethodName?.toLowerCase().includes("tunai") ||
+                        activeMethodName?.toLowerCase().includes("down") ||
+                        activeMethodName?.toLowerCase().includes("deposit");
                     const accountName = isCashLike ? "Cash" : "Bank";
-                    const [fallbackGl] = await tx
+                    let [fallbackGl] = await tx
                         .select()
                         .from(glAccounts)
                         .where(eq(glAccounts.name, accountName))
                         .limit(1);
+                    if (!fallbackGl && isCashLike) {
+                        [fallbackGl] = await tx
+                            .select()
+                            .from(glAccounts)
+                            .where(eq(glAccounts.code, "1110"))
+                            .limit(1);
+                    }
                     glAccountId = fallbackGl?.id || null;
                 }
 
@@ -403,7 +516,12 @@ export async function checkout(req: Request, res: Response) {
                 }
             }
 
-            return transaction;
+            return {
+                ...transaction,
+                customerName: customer?.name || "General Customer",
+                customerPhone: customer?.phone || "",
+                offlineInvoice: req.body.offlineInvoice,
+            };
         });
 
         logAction(req, {
@@ -421,5 +539,298 @@ export async function checkout(req: Request, res: Response) {
             message: "Checkout failed",
             error: (error as Error).message,
         });
+    }
+}
+
+export async function getOpenPosInvoices(req: Request, res: Response) {
+    try {
+        const search = ((req.query.search as string) || "").trim();
+        const branchId = await resolveBranchId(undefined, req);
+
+        const conditions = [
+            eq(openInvoices.type, "receivable"),
+            eq(transactions.type, "pos_sales"),
+            or(eq(openInvoices.status, "open"), eq(openInvoices.status, "partial")),
+        ];
+
+        if (branchId) {
+            conditions.push(eq(openInvoices.branchId, branchId));
+        }
+
+        const list = await db
+            .select({
+                id: openInvoices.id,
+                transactionId: openInvoices.transactionId,
+                invoice: transactions.invoice,
+                date: transactions.date,
+                dueDate: openInvoices.dueDate,
+                contactId: openInvoices.contactId,
+                customerName: contacts.name,
+                customerPhone: contacts.phone,
+                amount: openInvoices.amount,
+                paidAmount: openInvoices.paidAmount,
+                status: openInvoices.status,
+            })
+            .from(openInvoices)
+            .innerJoin(transactions, eq(openInvoices.transactionId, transactions.id))
+            .leftJoin(contacts, eq(openInvoices.contactId, contacts.id))
+            .where(and(...conditions))
+            .orderBy(openInvoices.dueDate, transactions.date);
+
+        const filtered = search
+            ? list.filter(
+                  (item) =>
+                      item.invoice?.toLowerCase().includes(search.toLowerCase()) ||
+                      item.customerName?.toLowerCase().includes(search.toLowerCase()) ||
+                      item.customerPhone?.toLowerCase().includes(search.toLowerCase()),
+              )
+            : list;
+
+        const transformed = filtered.map((item) => ({
+            ...item,
+            amount: Number(item.amount),
+            paidAmount: Number(item.paidAmount),
+            remainingAmount: Math.max(0, Number(item.amount) - Number(item.paidAmount)),
+        }));
+
+        res.json(transformed);
+    } catch (error) {
+        console.error("Error fetching open POS invoices:", error);
+        res.status(500).json({ message: "Failed to fetch open invoices" });
+    }
+}
+
+export async function settlePosInvoice(req: Request, res: Response) {
+    const { openInvoiceId, amount, paymentMethod, posSessionId } = req.body;
+
+    if (!openInvoiceId || !amount || Number(amount) <= 0) {
+        return res.status(400).json({ message: "Invalid invoice or amount" });
+    }
+
+    try {
+        const settleAmount = Number(amount);
+
+        if (posSessionId) {
+            const session = await db
+                .select()
+                .from(posSessions)
+                .where(and(eq(posSessions.id, posSessionId), eq(posSessions.status, "open")))
+                .limit(1)
+                .then((r) => r[0]);
+            if (!session) {
+                return res.status(400).json({ message: "Active POS session required" });
+            }
+        }
+
+        const user = await db
+            .select()
+            .from(users)
+            .where(eq(users.id, req.user!.id))
+            .limit(1)
+            .then((r) => r[0]);
+
+        const result = await db.transaction(async (tx) => {
+            const [openInvoice] = await tx
+                .select()
+                .from(openInvoices)
+                .where(eq(openInvoices.id, openInvoiceId))
+                .limit(1);
+
+            if (!openInvoice) {
+                throw new Error("Open invoice not found");
+            }
+
+            const currentPaid = Number(openInvoice.paidAmount || 0);
+            const total = Number(openInvoice.amount || 0);
+            const remaining = total - currentPaid;
+
+            if (settleAmount > remaining + 0.01) {
+                throw new Error(`Amount exceeds remaining balance (${remaining})`);
+            }
+
+            const [transaction] = openInvoice.transactionId
+                ? await tx
+                      .select()
+                      .from(transactions)
+                      .where(eq(transactions.id, openInvoice.transactionId))
+                      .limit(1)
+                : [null];
+
+            if (!transaction || transaction.type !== "pos_sales") {
+                throw new Error("Hanya nota transaksi POS yang dapat dilunasi di kasir POS");
+            }
+
+            const [payment] = await tx
+                .insert(payments)
+                .values({
+                    contactId: openInvoice.contactId,
+                    branchId: openInvoice.branchId,
+                    date: new Date().toISOString().split("T")[0],
+                    type: "receivable",
+                    totalAmount: settleAmount,
+                    status: "posted",
+                    reference: paymentMethod || "Cash",
+                    posSessionId: posSessionId || null,
+                })
+                .returning();
+
+            await tx.insert(paymentLines).values({
+                paymentId: payment.id,
+                openInvoiceId: openInvoice.id,
+                amount: settleAmount,
+            });
+
+            const newPaid = currentPaid + settleAmount;
+            const newStatus = newPaid >= total ? "paid" : "partial";
+            await tx
+                .update(openInvoices)
+                .set({
+                    paidAmount: newPaid,
+                    status: newStatus,
+                    updatedAt: new Date(),
+                })
+                .where(eq(openInvoices.id, openInvoice.id));
+
+            if (newStatus === "paid" && transaction) {
+                await tx
+                    .update(transactions)
+                    .set({
+                        status: "paid",
+                        updatedAt: new Date(),
+                    })
+                    .where(eq(transactions.id, transaction.id));
+            }
+
+            let glAccountId: string | null = null;
+            const activeMethodName = paymentMethod || "Cash";
+
+            const [method] = await tx
+                .select()
+                .from(paymentMethods)
+                .where(ilike(paymentMethods.name, activeMethodName))
+                .limit(1);
+
+            if (method?.isCash && user?.cashGlAccountId) {
+                glAccountId = user.cashGlAccountId;
+            } else if (method?.glAccountId) {
+                glAccountId = method.glAccountId;
+            } else {
+                const isCashLike =
+                    method?.isCash ||
+                    activeMethodName?.toLowerCase().includes("cash") ||
+                    activeMethodName?.toLowerCase().includes("tunai");
+                const accountName = isCashLike ? "Cash" : "Bank";
+                let [fallbackGl] = await tx
+                    .select()
+                    .from(glAccounts)
+                    .where(eq(glAccounts.name, accountName))
+                    .limit(1);
+                if (!fallbackGl && isCashLike) {
+                    [fallbackGl] = await tx
+                        .select()
+                        .from(glAccounts)
+                        .where(eq(glAccounts.code, "1110"))
+                        .limit(1);
+                }
+                glAccountId = fallbackGl?.id || null;
+            }
+
+            if (glAccountId) {
+                await tx.insert(paymentAccounts).values({
+                    paymentId: payment.id,
+                    glAccountId: glAccountId,
+                    amount: settleAmount,
+                });
+
+                const paymentJournalBranchId = await resolveBranchId(openInvoice.branchId, req);
+                const paymentJournalBranchCode = await resolveBranchCodeFromId(paymentJournalBranchId);
+                const paymentJournalInvoice = await generateJournalInvoice("ar_payment", paymentJournalBranchCode);
+                const [paymentJournal] = await tx
+                    .insert(journals)
+                    .values({
+                        invoice: paymentJournalInvoice,
+                        transactionId: transaction?.id,
+                        branchId: paymentJournalBranchId,
+                        date: payment.date,
+                        description: `Pelunasan Piutang POS ${transaction?.invoice || ""}`,
+                        status: "posted",
+                    })
+                    .returning();
+
+                await tx.insert(journalEntries).values({
+                    journalId: paymentJournal.id,
+                    glAccountId: glAccountId,
+                    debit: settleAmount,
+                    credit: 0,
+                    note: `Penerimaan Pelunasan ${activeMethodName} ${transaction?.invoice || ""}`,
+                });
+
+                const receivableAcc = await findGlAccountByCode("1300");
+                if (receivableAcc) {
+                    await tx.insert(journalEntries).values({
+                        journalId: paymentJournal.id,
+                        glAccountId: receivableAcc,
+                        debit: 0,
+                        credit: settleAmount,
+                        note: `Pengurangan Piutang ${transaction?.invoice || ""}`,
+                    });
+                }
+            }
+
+            let customerName = "Pelanggan";
+            if (openInvoice.contactId) {
+                const [cust] = await tx
+                    .select({ name: contacts.name })
+                    .from(contacts)
+                    .where(eq(contacts.id, openInvoice.contactId))
+                    .limit(1);
+                if (cust) customerName = cust.name;
+            }
+
+            return {
+                paymentId: payment.id,
+                invoice: transaction?.invoice,
+                customerName,
+                previousPaid: currentPaid,
+                amountPaid: settleAmount,
+                totalAmount: total,
+                remainingAmount: Math.max(0, total - newPaid),
+                status: newStatus,
+                date: payment.date,
+                paymentMethod: activeMethodName,
+            };
+        });
+
+        logAction(req, {
+            action: "insert",
+            table: "payments",
+            data: result,
+            userId: req.user!.id,
+            msg: `POS Invoice settled: ${result.invoice} (${result.amountPaid})`,
+        });
+
+        res.status(200).json(result);
+    } catch (error) {
+        console.error("POS Settle error:", error);
+        res.status(500).json({
+            message: "Settlement failed",
+            error: (error as Error).message,
+        });
+    }
+}
+
+export async function recordAuditLog(req: Request, res: Response) {
+    try {
+        const { eventType, details, sessionId } = req.body;
+        logAction(req, {
+            action: "delete",
+            table: "pos_cart_void",
+            data: { eventType, details, sessionId },
+            userId: req.user!.id,
+            msg: `[POS Anti-Fraud] ${eventType || "Item Void"}: ${JSON.stringify(details || {})}`,
+        });
+        res.status(200).json({ status: "logged" });
+    } catch (err: any) {
+        res.status(500).json({ message: "Failed to record audit log" });
     }
 }

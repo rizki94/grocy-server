@@ -16,7 +16,11 @@ import {
 } from "@/db/schemas";
 import { eq, inArray, and, gte, lte, sql, notInArray, desc, like, or } from "drizzle-orm";
 import { parseTableQuery } from "@/services/table-query";
-import { branchScope, withBranch } from "@/helpers/branch.helper";
+import {
+    branchScope,
+    resolveBranchId,
+    withBranch,
+} from "@/helpers/branch.helper";
 
 export const getUnassignedInvoices = async (req: Request, res: Response) => {
     try {
@@ -409,11 +413,14 @@ export const saveDispatch = async (req: Request, res: Response) => {
 
             // Fetch Driver & Truck details for load number formatting
             const driverRow = await db
-                .select({ name: drivers.name })
+                .select({ name: drivers.name, branchId: drivers.branchId })
                 .from(drivers)
                 .where(eq(drivers.id, driverId));
             const truckRow = await db
-                .select({ licensePlate: trucks.licensePlate })
+                .select({
+                    licensePlate: trucks.licensePlate,
+                    branchId: trucks.branchId,
+                })
                 .from(trucks)
                 .where(eq(trucks.id, truckId));
 
@@ -445,6 +452,11 @@ export const saveDispatch = async (req: Request, res: Response) => {
                         .insert(deliveries)
                         .values({
                             loadNumber: autoLoadNumber,
+                            branchId: await resolveBranchId(
+                                truckRow[0]?.branchId ??
+                                    driverRow[0]?.branchId,
+                                req,
+                            ),
                             deliveryDate: date,
                             driverId,
                             truckId,

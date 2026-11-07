@@ -55,7 +55,8 @@ export async function updateStockForTransaction(
             let [stock] = await tx
                 .select()
                 .from(stocks)
-                .where(and(...stockWhere)) || [];
+                .where(and(...stockWhere))
+                .for("update") || [];
 
             if (!stock) {
                 const [inserted] = await tx
@@ -149,7 +150,8 @@ export async function updateStockForTransaction(
                             gt(stockLayers.remainingQty, 0),
                         ),
                     )
-                    .orderBy(asc(stockLayers.createdAt));
+                    .orderBy(asc(stockLayers.createdAt))
+                    .for("update");
 
                 let totalCost = 0;
                 let totalUsedQty = 0;

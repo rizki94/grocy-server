@@ -10,6 +10,7 @@ import {
     userInsertSchema,
     userUpdateSchema,
 } from "@/validators/user.validator";
+import { resolveBranchId, withBranch } from "@/helpers/branch.helper";
 
 export const getAllUsers = async (req: Request, res: Response) => {
     try {
@@ -73,10 +74,10 @@ export const createUser = async (req: Request, res: Response) => {
 
         const [createdUser] = await db
             .insert(users)
-            .values({
+            .values(await withBranch({
                 ...userData,
                 password: await bcrypt.hash(userData.password, 10),
-            })
+            }, req))
             .returning();
 
         logAction(req, {
@@ -135,6 +136,7 @@ export const updateUser = async (req: Request, res: Response) => {
 
         const updateData = {
             ...rest,
+            branchId: await resolveBranchId(rest.branchId ?? oldUser.branchId, req),
             ...(password?.trim()
                 ? { password: await bcrypt.hash(password, 10) }
                 : {}),

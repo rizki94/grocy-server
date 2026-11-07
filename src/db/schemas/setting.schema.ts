@@ -5,6 +5,8 @@ import { relations } from "drizzle-orm";
 export const settings = pgTable("settings", {
     id: text("id").primaryKey(), // just a string key "global"
     posRound2Digit: boolean("pos_round_2_digit").default(false).notNull(),
+    posAllowTop: boolean("pos_allow_top").default(true).notNull(),
+    posAllowDownPayment: boolean("pos_allow_down_payment").default(true).notNull(),
     allowNegativeStock: boolean("allow_negative_stock").default(false).notNull(),
     enableInventoryTracking: boolean("enable_inventory_tracking").default(true).notNull(),
     roundingDifferenceGlAccountId: uuid("rounding_difference_gl_account_id").references(() => glAccounts.id),

@@ -3,8 +3,8 @@
     "version": "1.0.0",
     "main": "dist/index.js",
     "scripts": {
-        "dev": "nodemon --watch src --ext ts,js --delay 500ms --exec \"npx tsx src/index.ts\"",
-        "build": "tsc --project tsconfig.json",
+        "dev": "tsx watch src/index.ts",
+        "build": "tsc --project tsconfig.json && tsc-alias -p tsconfig.json",
         "start": "node dist/index.js",
         "seed": "tsx src/db/seeds/index.ts",
         "seed:demo": "tsx src/db/seeds/004_seed_demo_data.ts",
@@ -40,8 +40,8 @@
         "@types/passport": "^1.0.17",
         "@types/passport-local": "^1.0.38",
         "drizzle-kit": "^0.31.4",
-        "nodemon": "^3.1.14",
         "pino-pretty": "^13.1.1",
+        "tsc-alias": "^1.8.16",
         "tsx": "^4.20.3",
         "typescript": "^5.8.3"
     },
@@ -56,7 +56,6 @@
         "express": "^5.1.0",
         "express-session": "^1.18.2",
         "jsonwebtoken": "^9.0.2",
-        "module-alias": "^2.3.4",
         "mssql": "^12.7.10",
         "multer": "^2.0.2",
         "passport": "^0.7.0",

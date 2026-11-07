@@ -108,7 +108,7 @@ export const createPurchaseReturn = async (req: Request, res: Response) => {
         const [createdPurchase] = await db
             .insert(transactions)
             .values(
-                withBranch({
+                await withBranch({
                     ...purchaseData,
                     invoice,
                     type: "purchase_return",

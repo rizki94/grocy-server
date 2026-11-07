@@ -7,9 +7,9 @@ import { relations } from "drizzle-orm";
 
 export const periodClosings = pgTable("period_closings", {
     id: uuid("id").defaultRandom().primaryKey(),
-    branchId: uuid("branch_id").references(() => branches.id, {
-        onDelete: "set null",
-    }),
+    branchId: uuid("branch_id")
+        .notNull()
+        .references(() => branches.id),
     startDate: date("start_date").notNull(),
     endDate: date("end_date").notNull(),
     closingJournalId: uuid("closing_journal_id").references(() => journals.id, {

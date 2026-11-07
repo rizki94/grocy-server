@@ -15,7 +15,9 @@ export const users = pgTable("users", {
     roleId: uuid("role_id")
         .notNull()
         .references(() => roles.id),
-    branchId: uuid("branch_id").references(() => branches.id),
+    branchId: uuid("branch_id")
+        .notNull()
+        .references(() => branches.id),
     cashGlAccountId: uuid("cash_gl_account_id").references(() => glAccounts.id),
     posWarehouseId: uuid("pos_warehouse_id").references(() => warehouses.id),
     createdAt: timestamp("created_at").defaultNow().notNull(),
