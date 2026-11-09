@@ -99,7 +99,7 @@ export const productsRelations = relations(products, ({ many }) => ({
     details: many(productDetails),
 }));
 
-export const productDetailsRelations = relations(productDetails, ({ one }) => ({
+export const productDetailsRelations = relations(productDetails, ({ one, many }) => ({
     product: one(products, {
         fields: [productDetails.productId],
         references: [products.id],
@@ -107,5 +107,40 @@ export const productDetailsRelations = relations(productDetails, ({ one }) => ({
     unit: one(productUnits, {
         fields: [productDetails.unitId],
         references: [productUnits.id],
+    }),
+    prices: many(productDetailPrices),
+    tierPrices: many(productTierPrices),
+}));
+
+export const productTierPrices = pgTable("product_tier_prices", {
+    id: uuid("id").defaultRandom().primaryKey(),
+    productDetailId: uuid("product_detail_id")
+        .notNull()
+        .references(() => productDetails.id, { onDelete: "cascade" }),
+    priceGroupId: uuid("price_group_id")
+        .references(() => priceGroups.id, { onDelete: "cascade" }),
+    branchId: uuid("branch_id")
+        .references(() => branches.id, { onDelete: "cascade" }),
+    minQty: integer("min_qty").notNull(),
+    price: decimalAsNumber(12, 2)("price").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+        .defaultNow()
+        .notNull()
+        .$onUpdate(() => new Date()),
+});
+
+export const productTierPricesRelations = relations(productTierPrices, ({ one }) => ({
+    productDetail: one(productDetails, {
+        fields: [productTierPrices.productDetailId],
+        references: [productDetails.id],
+    }),
+    priceGroup: one(priceGroups, {
+        fields: [productTierPrices.priceGroupId],
+        references: [priceGroups.id],
+    }),
+    branch: one(branches, {
+        fields: [productTierPrices.branchId],
+        references: [branches.id],
     }),
 }));

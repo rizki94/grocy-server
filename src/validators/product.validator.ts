@@ -11,6 +11,31 @@ export const productDetailPriceInsertSchema = z.object({
     price: z.number().min(0).optional().default(0),
 });
 
+export const productTierPriceInsertSchema = z.object({
+    id: z
+        .string()
+        .uuid()
+        .optional()
+        .or(z.literal(""))
+        .transform((val) => (val === "" ? undefined : val)),
+    priceGroupId: z
+        .string()
+        .uuid()
+        .optional()
+        .nullable()
+        .or(z.literal(""))
+        .transform((val) => (val === "" ? null : val)),
+    branchId: z
+        .string()
+        .uuid()
+        .optional()
+        .nullable()
+        .or(z.literal(""))
+        .transform((val) => (val === "" ? null : val)),
+    minQty: z.coerce.number().int().min(1, "Minimum quantity must be at least 1"),
+    price: z.coerce.number().min(0, "Price must be non-negative"),
+});
+
 export const productDetailInsertSchema = z.object({
     id: z
         .string()
@@ -32,6 +57,7 @@ export const productDetailInsertSchema = z.object({
     isSellable: z.boolean().optional().default(true),
     isDefault: z.boolean().optional().default(false),
     prices: z.array(productDetailPriceInsertSchema).optional().default([]),
+    tierPrices: z.array(productTierPriceInsertSchema).optional().default([]),
 });
 
 export const productAttributeValueSchema = z.object({

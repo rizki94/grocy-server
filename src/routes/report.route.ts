@@ -7,6 +7,7 @@ import {
     getCustomerOutstandingAr,
     getPivotData,
     getTransactionRegister,
+    getCogsReport,
 } from "@/controllers/report.controller";
 
 const reportRouter = Router();
@@ -14,6 +15,7 @@ const reportRouter = Router();
 reportRouter.get("/profit-loss", getProfitLoss);
 reportRouter.get("/balance-sheet", getBalanceSheet);
 reportRouter.get("/product-profitability", getProductProfitability);
+reportRouter.get("/cogs", getCogsReport);
 reportRouter.get("/gl-balances", getGlBalances);
 reportRouter.get("/customer-outstanding-ar", getCustomerOutstandingAr);
 reportRouter.get("/pivot-data", getPivotData);

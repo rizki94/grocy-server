@@ -1,11 +1,13 @@
 import { db } from "@/db";
 import {
+    productAttributes,
     productAttributeValues,
     productDetails,
     productImages,
     productUnits,
     products,
     productDetailPrices,
+    productTierPrices,
     stockLayers,
     stocks,
     taxes,
@@ -75,6 +77,24 @@ export async function getActiveProducts(req: Request, res: Response) {
                 useBatch: products.useBatch,
                 useExpiry: products.useExpiry,
                 useSerialNumber: products.useSerialNumber,
+                image: sql<string | null>`(
+                    SELECT url FROM ${productImages} 
+                    WHERE ${productImages.productId} = ${products.id} 
+                    ORDER BY created_at ASC 
+                    LIMIT 1
+                )`,
+                stock: sql<number>`COALESCE((
+                    SELECT SUM(${stocks.qty}) FROM ${stocks}
+                    WHERE ${stocks.productId} = ${products.id}
+                ), 0)`,
+                category: sql<string | null>`(
+                    SELECT ${productAttributeValues.value}
+                    FROM ${productAttributeValues}
+                    INNER JOIN ${productAttributes} ON ${productAttributes.id} = ${productAttributeValues.attributeId}
+                    WHERE ${productAttributeValues.productId} = ${products.id}
+                      AND (${productAttributes.name} ILIKE '%kategori%' OR ${productAttributes.name} ILIKE '%category%')
+                    LIMIT 1
+                )`,
             })
             .from(products)
             .innerJoin(productDetails, eq(productDetails.productId, products.id))
@@ -100,9 +120,18 @@ export async function getActiveProducts(req: Request, res: Response) {
                 .where(inArray(productDetailPrices.productDetailId, productDetailIds))
             : [];
 
+        const tierPrices = productDetailIds.length > 0
+            ? await db
+                .select()
+                .from(productTierPrices)
+                .where(inArray(productTierPrices.productDetailId, productDetailIds))
+                .orderBy(asc(productTierPrices.minQty))
+            : [];
+
         const dataWithPrices = data.map(d => ({
             ...d,
-            prices: prices.filter(p => p.productDetailId === d.productDetailId)
+            prices: prices.filter(p => p.productDetailId === d.productDetailId),
+            tierPrices: tierPrices.filter(tp => tp.productDetailId === d.productDetailId),
         }));
 
         res.status(200).json(dataWithPrices);
@@ -148,9 +177,23 @@ export const getProductById = async (req: Request, res: Response) => {
                     : sql`1 = 0`
             );
 
+        const tierPrices = await db
+            .select()
+            .from(productTierPrices)
+            .where(
+                details.length > 0
+                    ? inArray(
+                        productTierPrices.productDetailId,
+                        details.map((d) => d.id),
+                    )
+                    : sql`1 = 0`
+            )
+            .orderBy(asc(productTierPrices.minQty));
+
         const detailsWithPrices = details.map((d) => ({
             ...d,
             prices: prices.filter((p) => p.productDetailId === d.id),
+            tierPrices: tierPrices.filter((tp) => tp.productDetailId === d.id),
         }));
 
         const attributes = await db
@@ -340,6 +383,18 @@ export const createProduct = async (req: Request, res: Response) => {
                         priceGroupId: p.priceGroupId,
                         branchId: globalPriceBranchId,
                         price: p.price,
+                    })),
+                );
+            }
+
+            if (d.tierPrices?.length) {
+                await db.insert(productTierPrices).values(
+                    d.tierPrices.map((tp) => ({
+                        productDetailId: createdDetail.id,
+                        priceGroupId: tp.priceGroupId || null,
+                        branchId: tp.branchId || null,
+                        minQty: tp.minQty,
+                        price: tp.price,
                     })),
                 );
             }
@@ -555,6 +610,23 @@ export const updateProduct = async (req: Request, res: Response) => {
                             price: p.price,
                         });
                     }
+                }
+
+                // Sync tier prices for this detail
+                await db
+                    .delete(productTierPrices)
+                    .where(eq(productTierPrices.productDetailId, detailId));
+
+                if (d.tierPrices?.length) {
+                    await db.insert(productTierPrices).values(
+                        d.tierPrices.map((tp) => ({
+                            productDetailId: detailId,
+                            priceGroupId: tp.priceGroupId || null,
+                            branchId: tp.branchId || null,
+                            minQty: tp.minQty,
+                            price: tp.price,
+                        })),
+                    );
                 }
             }
         }

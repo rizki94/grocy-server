@@ -140,6 +140,7 @@ async function main() {
         { code: "report.profit_loss.view", description: "View Profit & Loss", group: "report" },
         { code: "report.balance_sheet.view", description: "View Balance Sheet", group: "report" },
         { code: "report.product_profitability.view", description: "View Product Profitability", group: "report" },
+        { code: "report.cogs.view", description: "View COGS & Inventory Movement Report", group: "report" },
         { code: "report.gl_balance.view", description: "View GL Balances", group: "report" },
         { code: "report.customer_outstanding.view", description: "View Customer Outstanding AR", group: "report" },
         { code: "report.transaction_summary.view", description: "View Transaction Summary Report", group: "report" },

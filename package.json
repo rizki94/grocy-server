@@ -54,6 +54,7 @@
         "drizzle-zod": "^0.8.3",
         "exceljs": "^4.4.0",
         "express": "^5.1.0",
+        "express-rate-limit": "^8.7.3",
         "express-session": "^1.18.2",
         "jsonwebtoken": "^9.0.2",
         "mssql": "^12.7.10",

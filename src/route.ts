@@ -49,6 +49,7 @@ import incomeRouter from "./routes/income.route";
 import periodClosingRouter from "./routes/period-closing.route";
 import stockOpnameRouter from "./routes/stock-opname.route";
 import bankReconciliationRouter from "./routes/bank-reconciliation.route";
+import hrdRouter from "./routes/hrd.route";
 
 import { refresh } from "./controllers/auth.controller";
 
@@ -111,3 +112,4 @@ route.use("/incomes", incomeRouter);
 route.use("/period-closing", periodClosingRouter);
 route.use("/stock-opnames", stockOpnameRouter);
 route.use("/bank-reconciliations", bankReconciliationRouter);
+route.use("/hrd", hrdRouter);

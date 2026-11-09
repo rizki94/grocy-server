@@ -112,7 +112,7 @@ export const createPurchase = async (req: Request, res: Response) => {
                         ...purchase,
                         invoice,
                         type: "purchase",
-                        status: "order",
+                        status: purchase.status || "order",
                         userId: req.user!.id,
                     },
                     req,

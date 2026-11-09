@@ -1002,3 +1002,266 @@ export const getTransactionRegister = async (req: Request, res: Response) => {
         return res.status(500).json({ message: "Failed to generate report" });
     }
 };
+
+export const getCogsReport = async (req: Request, res: Response) => {
+    try {
+        const { from, to, warehouseId, search, pageIndex, pageSize, sortBy, order } = req.query;
+
+        const fromDate = from
+            ? (from as string).split("T")[0]
+            : `${new Date().getFullYear()}-01-01`;
+        const toDate = to
+            ? (to as string).split("T")[0]
+            : new Date().toISOString().split("T")[0];
+
+        const searchStr = typeof search === "string" ? search.trim().toLowerCase() : "";
+        const warehouseIdStr =
+            typeof warehouseId === "string" && warehouseId !== "all" && warehouseId !== ""
+                ? warehouseId
+                : null;
+
+        const targetBranchId = (!req.isHq || req.activeBranchId) && (req.activeBranchId || (req.user as any)?.branchId);
+
+        const warehouseCondition = warehouseIdStr ? sql`AND td.warehouse_id = ${warehouseIdStr}` : sql``;
+        const branchCondition = targetBranchId ? sql`AND t.branch_id = ${targetBranchId}` : sql``;
+        const searchCondition = searchStr
+            ? sql`WHERE (LOWER("productName") LIKE ${`%${searchStr}%`} OR LOWER(COALESCE("sku", '')) LIKE ${`%${searchStr}%`} OR LOWER(COALESCE("category", '')) LIKE ${`%${searchStr}%`})`
+            : sql``;
+
+        const query = sql`
+            WITH cogs_raw AS (
+                SELECT 
+                    p.id as "productId",
+                    p.name as "productName",
+                    COALESCE(pd.sku_id, '-') as "sku",
+                    COALESCE(pu.name, 'Unit') as "unitName",
+                    COALESCE(cat.value, 'Uncategorized') as "category",
+                    
+                    -- Saldo Awal (sebelum fromDate)
+                    ROUND(COALESCE(SUM(CASE WHEN t.date < ${fromDate} THEN 
+                        CASE 
+                            WHEN t.type IN ('purchase', 'sales_return') OR (t.type = 'adjustment' AND td.movement_type = 1) THEN (td.qty * COALESCE(td.base_ratio, 1))
+                            WHEN t.type IN ('sales', 'pos_sales', 'purchase_return') OR (t.type = 'adjustment' AND td.movement_type = -1) THEN -(td.qty * COALESCE(td.base_ratio, 1))
+                            ELSE 0 
+                        END
+                    ELSE 0 END), 0), 2) as "initialQty",
+
+                    ROUND(COALESCE(SUM(CASE WHEN t.date < ${fromDate} THEN 
+                        CASE 
+                            WHEN t.type = 'purchase' THEN COALESCE(td.amount, td.total_cost, 0)
+                            WHEN t.type = 'sales_return' THEN COALESCE(td.total_cost, 0)
+                            WHEN t.type = 'adjustment' AND td.movement_type = 1 THEN COALESCE(td.total_cost, 0)
+                            WHEN t.type IN ('sales', 'pos_sales') THEN -COALESCE(td.total_cost, 0)
+                            WHEN t.type = 'purchase_return' THEN -COALESCE(td.amount, td.total_cost, 0)
+                            WHEN t.type = 'adjustment' AND td.movement_type = -1 THEN -COALESCE(td.total_cost, 0)
+                            ELSE 0 
+                        END
+                    ELSE 0 END), 0), 2) as "initialAmount",
+
+                    -- Pembelian (periode berjalan)
+                    ROUND(COALESCE(SUM(CASE WHEN t.date >= ${fromDate} AND t.date <= ${toDate} AND t.type = 'purchase' THEN (td.qty * COALESCE(td.base_ratio, 1)) ELSE 0 END), 0), 2) as "purchaseQty",
+                    ROUND(COALESCE(SUM(CASE WHEN t.date >= ${fromDate} AND t.date <= ${toDate} AND t.type = 'purchase' THEN COALESCE(td.amount, td.total_cost, 0) ELSE 0 END), 0), 2) as "purchaseAmount",
+
+                    -- Retur Pembelian
+                    ROUND(COALESCE(SUM(CASE WHEN t.date >= ${fromDate} AND t.date <= ${toDate} AND t.type = 'purchase_return' THEN (td.qty * COALESCE(td.base_ratio, 1)) ELSE 0 END), 0), 2) as "purchaseReturnQty",
+                    ROUND(COALESCE(SUM(CASE WHEN t.date >= ${fromDate} AND t.date <= ${toDate} AND t.type = 'purchase_return' THEN COALESCE(td.amount, td.total_cost, 0) ELSE 0 END), 0), 2) as "purchaseReturnAmount",
+
+                    -- Penjualan
+                    ROUND(COALESCE(SUM(CASE WHEN t.date >= ${fromDate} AND t.date <= ${toDate} AND t.type IN ('sales', 'pos_sales') THEN (td.qty * COALESCE(td.base_ratio, 1)) ELSE 0 END), 0), 2) as "salesQty",
+                    ROUND(COALESCE(SUM(CASE WHEN t.date >= ${fromDate} AND t.date <= ${toDate} AND t.type IN ('sales', 'pos_sales') THEN COALESCE(td.amount, 0) ELSE 0 END), 0), 2) as "salesAmount",
+                    ROUND(COALESCE(SUM(CASE WHEN t.date >= ${fromDate} AND t.date <= ${toDate} AND t.type IN ('sales', 'pos_sales') THEN COALESCE(td.total_cost, 0) ELSE 0 END), 0), 2) as "salesCogs",
+
+                    -- Retur Penjualan
+                    ROUND(COALESCE(SUM(CASE WHEN t.date >= ${fromDate} AND t.date <= ${toDate} AND t.type = 'sales_return' THEN (td.qty * COALESCE(td.base_ratio, 1)) ELSE 0 END), 0), 2) as "salesReturnQty",
+                    ROUND(COALESCE(SUM(CASE WHEN t.date >= ${fromDate} AND t.date <= ${toDate} AND t.type = 'sales_return' THEN COALESCE(td.amount, 0) ELSE 0 END), 0), 2) as "salesReturnAmount",
+                    ROUND(COALESCE(SUM(CASE WHEN t.date >= ${fromDate} AND t.date <= ${toDate} AND t.type = 'sales_return' THEN COALESCE(td.total_cost, 0) ELSE 0 END), 0), 2) as "salesReturnCogs",
+
+                    -- Penyesuaian
+                    ROUND(COALESCE(SUM(CASE WHEN t.date >= ${fromDate} AND t.date <= ${toDate} AND t.type = 'adjustment' THEN 
+                        CASE WHEN td.movement_type = 1 THEN (td.qty * COALESCE(td.base_ratio, 1)) ELSE -(td.qty * COALESCE(td.base_ratio, 1)) END
+                    ELSE 0 END), 0), 2) as "adjustmentQty",
+                    ROUND(COALESCE(SUM(CASE WHEN t.date >= ${fromDate} AND t.date <= ${toDate} AND t.type = 'adjustment' THEN 
+                        CASE WHEN td.movement_type = 1 THEN COALESCE(td.total_cost, 0) ELSE -COALESCE(td.total_cost, 0) END
+                    ELSE 0 END), 0), 2) as "adjustmentAmount"
+
+                FROM products p
+                LEFT JOIN (
+                    SELECT DISTINCT ON (product_id) product_id, sku_id, unit_id 
+                    FROM product_details 
+                    ORDER BY product_id, base_ratio ASC
+                ) pd ON pd.product_id = p.id
+                LEFT JOIN product_units pu ON pd.unit_id = pu.id
+                LEFT JOIN (
+                    SELECT pav.product_id, pav.value 
+                    FROM product_attribute_values pav
+                    JOIN product_attributes pa ON pav.attribute_id = pa.id
+                    WHERE LOWER(pa.name) = 'category'
+                ) cat ON cat.product_id = p.id
+                JOIN transaction_details td ON td.product_id = p.id
+                JOIN transactions t ON td.transaction_id = t.id AND t.status IN ('posted', 'paid')
+                WHERE 1=1
+                ${warehouseCondition}
+                ${branchCondition}
+                GROUP BY p.id, p.name, pd.sku_id, pu.name, cat.value
+            )
+            SELECT 
+                *,
+                -- Net Purchase
+                ("purchaseQty" - "purchaseReturnQty") as "netPurchaseQty",
+                ("purchaseAmount" - "purchaseReturnAmount") as "netPurchaseAmount",
+                -- GAFS
+                ("initialQty" + ("purchaseQty" - "purchaseReturnQty")) as "gafsQty",
+                ("initialAmount" + ("purchaseAmount" - "purchaseReturnAmount")) as "gafsAmount",
+                -- Net Sales
+                ("salesQty" - "salesReturnQty") as "netSalesQty",
+                ("salesCogs" - "salesReturnCogs") as "netCogsAmount",
+                -- Saldo Akhir
+                (("initialQty" + ("purchaseQty" - "purchaseReturnQty")) - ("salesQty" - "salesReturnQty") + "adjustmentQty") as "endingQty",
+                (("initialAmount" + ("purchaseAmount" - "purchaseReturnAmount")) - ("salesCogs" - "salesReturnCogs") + "adjustmentAmount") as "endingAmount"
+            FROM cogs_raw
+            ${searchCondition}
+            ORDER BY "productName" ASC;
+        `;
+
+        const result = await db.execute(query);
+        const rawRows = result.rows as any[];
+
+        let totalInitialAmount = 0;
+        let totalPurchaseAmount = 0;
+        let totalPurchaseReturnAmount = 0;
+        let totalNetPurchaseAmount = 0;
+        let totalGafsAmount = 0;
+        let totalSalesAmount = 0;
+        let totalSalesCogs = 0;
+        let totalSalesReturnCogs = 0;
+        let totalNetCogs = 0;
+        let totalEndingAmount = 0;
+
+        const rows = rawRows.map((r) => {
+            const initialQty = Number(r.initialQty || 0);
+            const initialAmount = Number(r.initialAmount || 0);
+            const initialCost = initialQty > 0 ? Number((initialAmount / initialQty).toFixed(2)) : 0;
+
+            const purchaseQty = Number(r.purchaseQty || 0);
+            const purchaseAmount = Number(r.purchaseAmount || 0);
+            const purchaseReturnQty = Number(r.purchaseReturnQty || 0);
+            const purchaseReturnAmount = Number(r.purchaseReturnAmount || 0);
+
+            const netPurchaseQty = Number(r.netPurchaseQty || 0);
+            const netPurchaseAmount = Number(r.netPurchaseAmount || 0);
+
+            const gafsQty = Number(r.gafsQty || 0);
+            const gafsAmount = Number(r.gafsAmount || 0);
+            const gafsUnitCost = gafsQty > 0 ? Number((gafsAmount / gafsQty).toFixed(2)) : (initialCost || 0);
+
+            const salesQty = Number(r.salesQty || 0);
+            const salesAmount = Number(r.salesAmount || 0);
+            const salesCogs = Number(r.salesCogs || 0);
+
+            const salesReturnQty = Number(r.salesReturnQty || 0);
+            const salesReturnAmount = Number(r.salesReturnAmount || 0);
+            const salesReturnCogs = Number(r.salesReturnCogs || 0);
+
+            const netSalesQty = Number(r.netSalesQty || 0);
+            const netCogsAmount = Number(r.netCogsAmount || 0);
+            const cogsUnitCost = netSalesQty > 0 ? Number((netCogsAmount / netSalesQty).toFixed(2)) : (gafsUnitCost || 0);
+
+            const adjustmentQty = Number(r.adjustmentQty || 0);
+            const adjustmentAmount = Number(r.adjustmentAmount || 0);
+
+            const endingQty = Number(r.endingQty || 0);
+            const endingAmount = Number(r.endingAmount || 0);
+            const endingUnitCost = endingQty > 0 ? Number((endingAmount / endingQty).toFixed(2)) : (gafsUnitCost || 0);
+
+            totalInitialAmount += initialAmount;
+            totalPurchaseAmount += purchaseAmount;
+            totalPurchaseReturnAmount += purchaseReturnAmount;
+            totalNetPurchaseAmount += netPurchaseAmount;
+            totalGafsAmount += gafsAmount;
+            totalSalesAmount += salesAmount;
+            totalSalesCogs += salesCogs;
+            totalSalesReturnCogs += salesReturnCogs;
+            totalNetCogs += netCogsAmount;
+            totalEndingAmount += endingAmount;
+
+            return {
+                productId: r.productId,
+                productName: r.productName,
+                sku: r.sku,
+                unitName: r.unitName,
+                category: r.category,
+                initialQty,
+                initialAmount,
+                initialCost,
+                purchaseQty,
+                purchaseAmount,
+                purchaseReturnQty,
+                purchaseReturnAmount,
+                netPurchaseQty,
+                netPurchaseAmount,
+                gafsQty,
+                gafsAmount,
+                gafsUnitCost,
+                salesQty,
+                salesAmount,
+                salesCogs,
+                salesReturnQty,
+                salesReturnAmount,
+                salesReturnCogs,
+                netSalesQty,
+                netCogsAmount,
+                cogsUnitCost,
+                adjustmentQty,
+                adjustmentAmount,
+                endingQty,
+                endingAmount,
+                endingUnitCost,
+            };
+        });
+
+        // Sorting if requested
+        if (sortBy && typeof sortBy === "string") {
+            const isDesc = order === "desc";
+            rows.sort((a: any, b: any) => {
+                const valA = a[sortBy];
+                const valB = b[sortBy];
+                if (typeof valA === "number" && typeof valB === "number") {
+                    return isDesc ? valB - valA : valA - valB;
+                }
+                const strA = String(valA || "").toLowerCase();
+                const strB = String(valB || "").toLowerCase();
+                return isDesc ? strB.localeCompare(strA) : strA.localeCompare(strB);
+            });
+        }
+
+        const parsedPageIndex = parseInt(pageIndex as string, 10);
+        const parsedPageSize = parseInt(pageSize as string, 10);
+        const safePageIndex = !isNaN(parsedPageIndex) && parsedPageIndex >= 0 ? parsedPageIndex : 0;
+        const safePageSize = !isNaN(parsedPageSize) ? parsedPageSize : 20;
+
+        const pagedRows = safePageSize === -1 ? rows : rows.slice(safePageIndex * safePageSize, (safePageIndex + 1) * safePageSize);
+
+        return res.json({
+            fromDate,
+            toDate,
+            summary: {
+                totalInitialAmount: Number(totalInitialAmount.toFixed(2)),
+                totalPurchaseAmount: Number(totalPurchaseAmount.toFixed(2)),
+                totalPurchaseReturnAmount: Number(totalPurchaseReturnAmount.toFixed(2)),
+                totalNetPurchaseAmount: Number(totalNetPurchaseAmount.toFixed(2)),
+                totalGafsAmount: Number(totalGafsAmount.toFixed(2)),
+                totalSalesAmount: Number(totalSalesAmount.toFixed(2)),
+                totalSalesCogs: Number(totalSalesCogs.toFixed(2)),
+                totalSalesReturnCogs: Number(totalSalesReturnCogs.toFixed(2)),
+                totalNetCogs: Number(totalNetCogs.toFixed(2)),
+                totalEndingAmount: Number(totalEndingAmount.toFixed(2)),
+            },
+            rows: pagedRows,
+            rowCount: rows.length,
+            pageCount: safePageSize === -1 ? 1 : Math.ceil(rows.length / safePageSize),
+        });
+    } catch (error) {
+        console.error("COGS Report Error:", error);
+        return res.status(500).json({ message: "Failed to generate COGS report" });
+    }
+};
