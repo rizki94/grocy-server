@@ -126,6 +126,18 @@ export async function checkout(req: Request, res: Response) {
             contactId = customer?.id;
         }
 
+        if (!customer) {
+            return res.status(400).json({
+                message: "Data pelanggan tidak ditemukan (General Customer belum tersedia).",
+            });
+        }
+
+        if (!customer.priceGroupId) {
+            return res.status(400).json({
+                message: `Pelanggan "${customer.name}" belum memiliki Price Group. Harap atur Price Group pelanggan terlebih dahulu sebelum melakukan transaksi.`,
+            });
+        }
+
         const termDays = Number(customer?.termOfPayment) || 0;
         let calculatedDueDate = req.body.dueDate;
         if (!calculatedDueDate) {

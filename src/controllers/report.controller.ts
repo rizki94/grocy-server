@@ -37,6 +37,7 @@ import {
     inArray,
     asc,
     ilike,
+    isNull,
     or,
 } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
@@ -485,6 +486,187 @@ export const getCustomerOutstandingAr = async (req: Request, res: Response) => {
         console.error("Customer Outstanding AR Error:", error);
         res.status(500).json({
             message: "Failed to generate report",
+            error: error.message,
+        });
+    }
+};
+
+export const getAgingReport = async (req: Request, res: Response) => {
+    try {
+        const typeParam =
+            req.query.type === "payable" ? "payable" : "receivable";
+        const asOfParam =
+            typeof req.query.asOf === "string" && req.query.asOf.trim()
+                ? req.query.asOf.trim().split("T")[0]
+                : new Date().toISOString().split("T")[0];
+
+        const scope = branchScope(openInvoices.branchId, req);
+
+        const rows = await db
+            .select({
+                openInvoiceId: openInvoices.id,
+                transactionId: openInvoices.transactionId,
+                invoice: transactions.invoice,
+                txDate: transactions.date,
+                txType: transactions.type,
+                dueDate: openInvoices.dueDate,
+                amount: openInvoices.amount,
+                paidAmount: openInvoices.paidAmount,
+                status: openInvoices.status,
+                contactId: contacts.id,
+                contactName: contacts.name,
+                contactPhone: contacts.phone,
+            })
+            .from(openInvoices)
+            .innerJoin(contacts, eq(openInvoices.contactId, contacts.id))
+            .leftJoin(
+                transactions,
+                eq(openInvoices.transactionId, transactions.id),
+            )
+            .where(
+                and(
+                    eq(openInvoices.type, typeParam),
+                    sql`${openInvoices.amount} - ${openInvoices.paidAmount} > 0.005`,
+                    or(
+                        isNull(transactions.date),
+                        lte(transactions.date, asOfParam),
+                    ),
+                    scope,
+                ),
+            )
+            .orderBy(asc(openInvoices.dueDate));
+
+        const asOfTime = new Date(`${asOfParam}T00:00:00Z`).getTime();
+        const MS_PER_DAY = 86_400_000;
+
+        type AgingInvoiceItem = {
+            openInvoiceId: string;
+            transactionId: string | null;
+            invoice: string;
+            txDate: string | null;
+            txType: string | null;
+            dueDate: string;
+            daysOverdue: number;
+            bucket: "current" | "1-30" | "31-60" | "61-90" | "90+";
+            amount: number;
+            paidAmount: number;
+            remaining: number;
+        };
+
+        type AgingContactGroup = {
+            contactId: string;
+            contactName: string;
+            contactPhone: string;
+            invoiceCount: number;
+            current: number;
+            days1to30: number;
+            days31to60: number;
+            days61to90: number;
+            over90: number;
+            totalRemaining: number;
+            invoices: AgingInvoiceItem[];
+        };
+
+        const groupMap = new Map<string, AgingContactGroup>();
+
+        const summary = {
+            totalRemaining: 0,
+            current: 0,
+            days1to30: 0,
+            days31to60: 0,
+            days61to90: 0,
+            over90: 0,
+            contactCount: 0,
+            invoiceCount: 0,
+        };
+
+        for (const r of rows) {
+            const amount = Number(r.amount || 0);
+            const paidAmount = Number(r.paidAmount || 0);
+            const remaining = Math.round((amount - paidAmount) * 100) / 100;
+            if (remaining <= 0.005) continue;
+
+            const dueStr = String(r.dueDate).slice(0, 10);
+            const dueTime = new Date(`${dueStr}T00:00:00Z`).getTime();
+            const daysOverdue = Math.floor((asOfTime - dueTime) / MS_PER_DAY);
+
+            let bucket: AgingInvoiceItem["bucket"] = "current";
+            if (daysOverdue <= 0) bucket = "current";
+            else if (daysOverdue <= 30) bucket = "1-30";
+            else if (daysOverdue <= 60) bucket = "31-60";
+            else if (daysOverdue <= 90) bucket = "61-90";
+            else bucket = "90+";
+
+            let group = groupMap.get(r.contactId);
+            if (!group) {
+                group = {
+                    contactId: r.contactId,
+                    contactName: r.contactName,
+                    contactPhone: r.contactPhone,
+                    invoiceCount: 0,
+                    current: 0,
+                    days1to30: 0,
+                    days31to60: 0,
+                    days61to90: 0,
+                    over90: 0,
+                    totalRemaining: 0,
+                    invoices: [],
+                };
+                groupMap.set(r.contactId, group);
+            }
+
+            group.invoiceCount += 1;
+            group.totalRemaining += remaining;
+            summary.invoiceCount += 1;
+            summary.totalRemaining += remaining;
+
+            if (bucket === "current") {
+                group.current += remaining;
+                summary.current += remaining;
+            } else if (bucket === "1-30") {
+                group.days1to30 += remaining;
+                summary.days1to30 += remaining;
+            } else if (bucket === "31-60") {
+                group.days31to60 += remaining;
+                summary.days31to60 += remaining;
+            } else if (bucket === "61-90") {
+                group.days61to90 += remaining;
+                summary.days61to90 += remaining;
+            } else {
+                group.over90 += remaining;
+                summary.over90 += remaining;
+            }
+
+            group.invoices.push({
+                openInvoiceId: r.openInvoiceId,
+                transactionId: r.transactionId,
+                invoice: r.invoice || "-",
+                txDate: r.txDate,
+                txType: r.txType,
+                dueDate: dueStr,
+                daysOverdue,
+                bucket,
+                amount,
+                paidAmount,
+                remaining,
+            });
+        }
+
+        const contactsList = Array.from(groupMap.values()).sort(
+            (a, b) => b.totalRemaining - a.totalRemaining,
+        );
+        summary.contactCount = contactsList.length;
+
+        return res.json({
+            type: typeParam,
+            asOfDate: asOfParam,
+            summary,
+            contacts: contactsList,
+        });
+    } catch (error: any) {
+        console.error("Aging Report Error:", error);
+        return res.status(500).json({
+            message: "Failed to generate aging report",
             error: error.message,
         });
     }

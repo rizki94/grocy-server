@@ -1,14 +1,15 @@
 import { db } from "@/db";
 import { contacts } from "@/db/schemas/contact.schema";
 import { openInvoices } from "@/db/schemas/payment.schema";
+import { priceGroups } from "@/db/schemas/price-group.schema";
 import { routeGroups } from "@/db/schemas/route-group.schema";
 import { users } from "@/db/schemas/user.schema";
 import { branchScope } from "@/helpers/branch.helper";
 import { logAction } from "@/utils/log-helper";
 import { CacheService } from "@/services/cache-service";
 import {
-    contactInsertSchema,
-    contactUpdateSchema,
+    customerInsertSchema,
+    customerUpdateSchema,
 } from "@/validators/contact.validator";
 import { and, asc, desc, eq, like, or, sql } from "drizzle-orm";
 import { PgColumn } from "drizzle-orm/pg-core";
@@ -64,7 +65,7 @@ export const getCustomerById = async (req: Request, res: Response) => {
 };
 
 export const createCustomer = async (req: Request, res: Response) => {
-    const parsed = contactInsertSchema.safeParse(req.body);
+    const parsed = customerInsertSchema.safeParse(req.body);
 
     if (!parsed.success) {
         return res.status(400).json({
@@ -74,6 +75,16 @@ export const createCustomer = async (req: Request, res: Response) => {
     }
 
     try {
+        const [priceGroup] = await db
+            .select({ id: priceGroups.id })
+            .from(priceGroups)
+            .where(eq(priceGroups.id, parsed.data.priceGroupId))
+            .limit(1);
+
+        if (!priceGroup) {
+            return res.status(400).json({ message: "Selected price group was not found" });
+        }
+
         const existingName = await db
             .select()
             .from(contacts)
@@ -94,6 +105,11 @@ export const createCustomer = async (req: Request, res: Response) => {
                 contactType: "customer",
             })
             .returning();
+
+        await Promise.all([
+            CacheService.del("customers:all"),
+            CacheService.del("customers:active"),
+        ]);
 
         const transformedCustomer = {
             ...createdCustomer,
@@ -121,7 +137,7 @@ export const createCustomer = async (req: Request, res: Response) => {
 };
 
 export const updateCustomer = async (req: Request, res: Response) => {
-    const parsed = contactUpdateSchema.safeParse(req.body);
+    const parsed = customerUpdateSchema.safeParse(req.body);
 
     if (!parsed.success) {
         return res.status(400).json({
@@ -133,6 +149,16 @@ export const updateCustomer = async (req: Request, res: Response) => {
     const customer = parsed.data;
 
     try {
+        const [priceGroup] = await db
+            .select({ id: priceGroups.id })
+            .from(priceGroups)
+            .where(eq(priceGroups.id, customer.priceGroupId))
+            .limit(1);
+
+        if (!priceGroup) {
+            return res.status(400).json({ message: "Selected price group was not found" });
+        }
+
         const oldCustomer = await db
             .select()
             .from(contacts)
@@ -162,6 +188,11 @@ export const updateCustomer = async (req: Request, res: Response) => {
             })
             .where(eq(contacts.id, customer.id))
             .returning();
+
+        await Promise.all([
+            CacheService.del("customers:all"),
+            CacheService.del("customers:active"),
+        ]);
 
         const transformedCustomer = {
             ...updatedCustomer,
@@ -206,12 +237,14 @@ export const getActiveCustomers = async (req: Request, res: Response) => {
                         phone: contacts.phone,
                         email: contacts.email,
                         priceGroupId: contacts.priceGroupId,
+                        priceGroupName: priceGroups.name,
                         latitude: contacts.latitude,
                         longitude: contacts.longitude,
                         routeGroupId: contacts.routeGroupId,
                         salespersonId: contacts.salespersonId,
                     })
                     .from(contacts)
+                    .leftJoin(priceGroups, eq(contacts.priceGroupId, priceGroups.id))
                     .where(
                         and(
                             eq(contacts.contactType, "customer"),
@@ -332,6 +365,7 @@ export const getPaginatedCustomers = async (req: Request, res: Response) => {
                     creditLimit: contacts.creditLimit,
                     invoiceLimit: contacts.invoiceLimit,
                     priceGroupId: contacts.priceGroupId,
+                    priceGroupName: priceGroups.name,
                     latitude: contacts.latitude,
                     longitude: contacts.longitude,
                     routeGroupId: contacts.routeGroupId,
@@ -343,6 +377,7 @@ export const getPaginatedCustomers = async (req: Request, res: Response) => {
                     updatedAt: contacts.updatedAt,
                 })
                 .from(contacts)
+                .leftJoin(priceGroups, eq(contacts.priceGroupId, priceGroups.id))
                 .leftJoin(routeGroups, eq(contacts.routeGroupId, routeGroups.id))
                 .leftJoin(users, eq(contacts.salespersonId, users.id))
                 .where(

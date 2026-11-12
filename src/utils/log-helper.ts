@@ -2,7 +2,7 @@ import { logger } from "@/logger";
 import { Request } from "express";
 
 interface ActionLogOptions {
-    action: "insert" | "update" | "delete" | "login";
+    action: "insert" | "update" | "delete" | "login" | "logout";
     table: string;
     oldData?: any;
     data?: any;

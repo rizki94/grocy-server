@@ -30,6 +30,10 @@ export const contacts = pgTable("contacts", {
     longitude: decimal("longitude", { precision: 11, scale: 8 }),
     routeGroupId: uuid("route_group_id").references(() => routeGroups.id),
     salespersonId: uuid("salesperson_id"),
+    npwp: text("npwp"),
+    nitku: text("nitku"),
+    isPkp: boolean("is_pkp").notNull().default(false),
+    taxAddress: text("tax_address"),
     isActive: boolean("is_active").notNull().default(true),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")

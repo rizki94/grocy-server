@@ -15,6 +15,11 @@ export const settings = pgTable("settings", {
     maxDateOffset: integer("max_date_offset").default(30).notNull(),      // days relative to today (positive = future)
     lockSalesPrice: boolean("lock_sales_price").default(false).notNull(), // prevent manual price edits in sales
     enableTax: boolean("enable_tax").default(true).notNull(),             // global tax toggle
+    companyName: text("company_name"),
+    companyNpwp: text("company_npwp"),
+    companyNitku: text("company_nitku"),
+    companyTaxAddress: text("company_tax_address"),
+    useDppNilaiLain: boolean("use_dpp_nilai_lain").default(true).notNull(),
     // Transaction code / prefix settings
     purchasePrefix: text("purchase_prefix").default("PUR").notNull(),
     salesPrefix: text("sales_prefix").default("SLS").notNull(),

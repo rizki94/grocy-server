@@ -53,6 +53,11 @@ export const transactions = pgTable("transactions", {
         .references(() => branches.id)
         .notNull(),
     parentId: uuid("parent_id").references((): any => transactions.id),
+    taxReportingMode: text("tax_reporting_mode"), // "faktur_pajak" | "digunggung" | "non_ppn"
+    taxInvoiceCode: text("tax_invoice_code"), // e.g. "04" (DPP Nilai Lain), "01"
+    taxInvoiceNumber: text("tax_invoice_number"), // NSFP from Coretax
+    taxInvoiceDate: date("tax_invoice_date"),
+    taxInvoiceStatus: text("tax_invoice_status").default("pending"), // "pending" | "exported" | "issued" | "cancelled"
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
         .defaultNow()

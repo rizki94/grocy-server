@@ -36,6 +36,7 @@ import { Request, Response } from "express";
 import { findGlAccountByCode } from "@/repositories/gl-account.repository";
 import { parseTableQuery } from "@/services/table-query";
 import { branchScope, withBranch, resolveBranchId, resolveBranchCode, resolveBranchCodeFromId } from "@/helpers/branch.helper";
+import { assertCustomerHasPriceGroup, CustomerGuardError } from "@/helpers/customer.helper";
 import { isTaxEnabled, withoutTax } from "@/helpers/tax.helper";
 
 export async function getAllSalesReturns(req: Request, res: Response) {
@@ -100,6 +101,11 @@ export const createSalesReturn = async (req: Request, res: Response) => {
     const invoice = await generateInvoice("sales_return", branchCode);
 
     try {
+        if (!parsed.data.contactId) {
+            return res.status(400).json({ message: "Customer is required" });
+        }
+        await assertCustomerHasPriceGroup(parsed.data.contactId);
+
         const salesDataWithDetails = (await isTaxEnabled())
             ? parsed.data
             : withoutTax(parsed.data);
@@ -148,6 +154,9 @@ export const createSalesReturn = async (req: Request, res: Response) => {
             sales: { ...transaction, details: responseDetails },
         });
     } catch (error) {
+        if (error instanceof CustomerGuardError) {
+            return res.status(error.statusCode).json({ message: error.message });
+        }
         console.error("Create sales error:", error);
         return res
             .status(500)
@@ -170,6 +179,11 @@ export const updateSalesReturn = async (req: Request, res: Response) => {
         return res.status(400).json({ message: "Sales id is required" });
 
     try {
+        if (!sales.contactId) {
+            return res.status(400).json({ message: "Customer is required" });
+        }
+        await assertCustomerHasPriceGroup(sales.contactId);
+
         if (!(await isTaxEnabled())) {
             sales = withoutTax(sales);
         }
@@ -254,6 +268,9 @@ export const updateSalesReturn = async (req: Request, res: Response) => {
             sales: updatedSales,
         });
     } catch (error) {
+        if (error instanceof CustomerGuardError) {
+            return res.status(error.statusCode).json({ message: error.message });
+        }
         console.error("Update sales error:", error);
         return res
             .status(500)
@@ -279,6 +296,11 @@ export const postSalesReturn = async (req: Request, res: Response) => {
                     `Sales return is already ${existing.status} and cannot be posted again`,
                 );
             }
+
+            if (!existing.contactId) {
+                throw new Error("Sales return customer is required");
+            }
+            await assertCustomerHasPriceGroup(existing.contactId, tx);
 
             const [existingJournal] = await tx
                 .select()

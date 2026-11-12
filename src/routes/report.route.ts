@@ -5,6 +5,7 @@ import {
     getProfitLoss,
     getGlBalances,
     getCustomerOutstandingAr,
+    getAgingReport,
     getPivotData,
     getTransactionRegister,
     getCogsReport,
@@ -18,6 +19,7 @@ reportRouter.get("/product-profitability", getProductProfitability);
 reportRouter.get("/cogs", getCogsReport);
 reportRouter.get("/gl-balances", getGlBalances);
 reportRouter.get("/customer-outstanding-ar", getCustomerOutstandingAr);
+reportRouter.get("/aging", getAgingReport);
 reportRouter.get("/pivot-data", getPivotData);
 reportRouter.get(
     "/transaction-register/:transactionType/:sortBy",

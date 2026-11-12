@@ -16,6 +16,7 @@ import stockRouter from "./routes/stock.route";
 import roleRouter from "./routes/role.route";
 import permissionRouter from "./routes/permission.route";
 import userRouter from "./routes/user.route";
+import sessionRouter from "./routes/session.route";
 import salesRouter from "./routes/sales.route";
 import dashboardRouter from "./routes/dashboard.route";
 import reportRouter from "./routes/report.route";
@@ -72,6 +73,7 @@ route.get("/me", (req, res) => {
 route.use("/dashboard", dashboardRouter);
 route.use("/logs", logsRouter);
 route.use("/users", userRouter);
+route.use("/sessions", sessionRouter);
 route.use("/roles", roleRouter);
 route.use("/permissions", permissionRouter);
 route.use("/customers", customerRouter);

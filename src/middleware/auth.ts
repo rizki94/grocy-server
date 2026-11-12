@@ -1,5 +1,8 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
+import { getClientIp, type SessionMeta } from "@/helpers/session.helper";
+
+const ACTIVITY_UPDATE_INTERVAL_MS = 30_000;
 
 export function isAuthenticated(
     req: Request,
@@ -8,6 +11,31 @@ export function isAuthenticated(
 ) {
     // 1. Check Session (Passport)
     if (req.isAuthenticated && req.isAuthenticated()) {
+        if (req.session) {
+            const sessAny = req.session as typeof req.session & {
+                meta?: SessionMeta;
+            };
+            const now = Date.now();
+            const lastActivityMs = sessAny.meta?.lastActivityAt
+                ? new Date(sessAny.meta.lastActivityAt).getTime()
+                : 0;
+
+            if (!sessAny.meta || now - lastActivityMs > ACTIVITY_UPDATE_INTERVAL_MS) {
+                const nowIso = new Date(now).toISOString();
+                const reqUser = req.user as { id?: string; username?: string } | undefined;
+                sessAny.meta = {
+                    userId: sessAny.meta?.userId || reqUser?.id || "",
+                    username: sessAny.meta?.username || reqUser?.username || "",
+                    ip: sessAny.meta?.ip || getClientIp(req),
+                    userAgent:
+                        sessAny.meta?.userAgent ||
+                        req.get("User-Agent") ||
+                        "unknown",
+                    loginAt: sessAny.meta?.loginAt || nowIso,
+                    lastActivityAt: nowIso,
+                };
+            }
+        }
         return next();
     }
 

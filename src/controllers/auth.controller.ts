@@ -1,13 +1,18 @@
 import { db } from "@/db";
 import { permissions } from "@/db/schemas/permission.schema";
 import { rolePermissions } from "@/db/schemas/role-permission.schema";
-import { users } from "@/db/schemas";
+import { sessions, users } from "@/db/schemas";
 import { logAction } from "@/utils/log-helper";
 import { UserModel } from "@/validators/user.validator";
+import {
+    getClientIp,
+    parseUserAgentHint,
+    type SessionMeta,
+} from "@/helpers/session.helper";
 import type { NextFunction, Request, Response } from "express";
 import passport from "passport";
 import jwt from "jsonwebtoken";
-import { eq } from "drizzle-orm";
+import { and, eq, gt, ne, sql } from "drizzle-orm";
 
 export const login = async (
     req: Request,
@@ -16,7 +21,7 @@ export const login = async (
 ) => {
     passport.authenticate(
         "local",
-        (err: unknown, user: UserModel | false, info: { message?: string }) => {
+        async (err: unknown, user: UserModel | false, info: { message?: string }) => {
             if (err) {
                 return res
                     .status(500)
@@ -29,6 +34,60 @@ export const login = async (
                     .json({ message: info?.message || "Invalid credentials" });
             }
 
+            // Enforce single active device session per user
+            try {
+                const existingSessions = await db
+                    .select({
+                        sid: sessions.sid,
+                        sess: sessions.sess,
+                        expire: sessions.expire,
+                    })
+                    .from(sessions)
+                    .where(
+                        and(
+                            sql`${sessions.sess}->'passport'->>'user' = ${user.id}`,
+                            gt(sessions.expire, new Date()),
+                            ne(sessions.sid, req.sessionID || ""),
+                        )
+                    );
+
+                if (existingSessions.length > 0) {
+                    const existingMeta = (existingSessions[0].sess as any)
+                        ?.meta as SessionMeta | undefined;
+
+                    logAction(req, {
+                        action: "login",
+                        table: "sessions",
+                        data: {
+                            userId: user.id,
+                            username: user.username,
+                            blocked: true,
+                            reason: "USER_ALREADY_LOGGED_IN",
+                            existingSid: existingSessions[0].sid,
+                        },
+                        userId: user.id,
+                        msg: `blocked login for "${user.username}": already logged in on another device`,
+                    });
+
+                    return res.status(409).json({
+                        code: "USER_ALREADY_LOGGED_IN",
+                        message:
+                            "This account is already logged in on another device. Please log out from the other device first before logging in here.",
+                        activeSession: {
+                            device: parseUserAgentHint(existingMeta?.userAgent),
+                            ip: existingMeta?.ip || null,
+                            loginAt: existingMeta?.loginAt || null,
+                            lastActivityAt: existingMeta?.lastActivityAt || null,
+                        },
+                    });
+                }
+            } catch (checkErr) {
+                return res.status(500).json({
+                    message: "Failed to verify active sessions",
+                    error: checkErr,
+                });
+            }
+
             req.logIn(user, (err) => {
                 if (err) {
                     return res
@@ -36,26 +95,48 @@ export const login = async (
                         .json({ message: "Login failed", error: err });
                 }
 
-                logAction(req, {
-                    action: "login",
-                    table: "users",
-                    data: {
-                        userId: user.id,
-                        username: user.username,
-                        ip: req.ip,
-                        userAgent: req.get("User-Agent"),
-                        timestamp: new Date().toISOString(),
-                    },
-                    userId: user.id,
-                    msg: `logged in user "${user.username}"`,
-                });
+                const nowIso = new Date().toISOString();
+                const ip = getClientIp(req);
+                const userAgent = req.get("User-Agent") || "unknown";
 
-                return res.status(200).json({
-                    message: "Login success",
-                    user: {
-                        id: user.id,
-                        username: user.username,
-                    },
+                (req.session as typeof req.session & { meta?: SessionMeta }).meta = {
+                    userId: user.id,
+                    username: user.username,
+                    ip,
+                    userAgent,
+                    loginAt: nowIso,
+                    lastActivityAt: nowIso,
+                };
+
+                req.session.save((saveErr) => {
+                    if (saveErr) {
+                        return res.status(500).json({
+                            message: "Failed to persist session",
+                            error: saveErr,
+                        });
+                    }
+
+                    logAction(req, {
+                        action: "login",
+                        table: "users",
+                        data: {
+                            userId: user.id,
+                            username: user.username,
+                            ip,
+                            userAgent,
+                            timestamp: nowIso,
+                        },
+                        userId: user.id,
+                        msg: `logged in user "${user.username}"`,
+                    });
+
+                    return res.status(200).json({
+                        message: "Login success",
+                        user: {
+                            id: user.id,
+                            username: user.username,
+                        },
+                    });
                 });
             });
         }
@@ -63,8 +144,46 @@ export const login = async (
 };
 
 export const logout = async (req: Request, res: Response) => {
-    req.logout(() => {
-        res.send("Logged out");
+    const activeUser = req.user as { id?: string; username?: string } | undefined;
+    const sid = req.sessionID;
+
+    req.logout((logoutErr) => {
+        if (logoutErr) {
+            return res
+                .status(500)
+                .json({ message: "Logout failed", error: logoutErr });
+        }
+
+        if (!req.session) {
+            res.clearCookie("connect.sid");
+            return res.status(200).json({ message: "Logged out" });
+        }
+
+        req.session.destroy((destroyErr) => {
+            res.clearCookie("connect.sid");
+            if (destroyErr) {
+                return res.status(500).json({
+                    message: "Failed to destroy session",
+                    error: destroyErr,
+                });
+            }
+
+            if (activeUser?.id) {
+                logAction(req, {
+                    action: "logout",
+                    table: "sessions",
+                    data: {
+                        userId: activeUser.id,
+                        username: activeUser.username,
+                        sid,
+                    },
+                    userId: activeUser.id,
+                    msg: `logged out user "${activeUser.username}"`,
+                });
+            }
+
+            return res.status(200).json({ message: "Logged out" });
+        });
     });
 };
 

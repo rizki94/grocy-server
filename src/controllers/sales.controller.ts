@@ -12,6 +12,7 @@ import {
 import { addDays } from "@/helpers/add-days";
 import { generateInvoice, generateJournalInvoice } from "@/helpers/generate-invoice";
 import { resolveBranchId, resolveBranchCode, resolveBranchCodeFromId } from "@/helpers/branch.helper";
+import { assertCustomerHasPriceGroup, CustomerGuardError } from "@/helpers/customer.helper";
 import { logAction } from "@/utils/log-helper";
 import { updateStockForTransaction } from "@/repositories/stock.repository";
 import {
@@ -95,6 +96,11 @@ export const createSales = async (req: Request, res: Response) => {
     const invoice = await generateInvoice("sales", branchCode);
 
     try {
+        if (!parsed.data.contactId) {
+            return res.status(400).json({ message: "Customer is required" });
+        }
+        await assertCustomerHasPriceGroup(parsed.data.contactId);
+
         const sales = (await isTaxEnabled())
             ? parsed.data
             : withoutTax(parsed.data);
@@ -142,6 +148,9 @@ export const createSales = async (req: Request, res: Response) => {
             sales: { ...transaction, details },
         });
     } catch (error) {
+        if (error instanceof CustomerGuardError) {
+            return res.status(error.statusCode).json({ message: error.message });
+        }
         console.error("Create sales error:", error);
         return res
             .status(500)
@@ -164,6 +173,11 @@ export const updateSales = async (req: Request, res: Response) => {
         return res.status(400).json({ message: "Sales id is required" });
 
     try {
+        if (!sales.contactId) {
+            return res.status(400).json({ message: "Customer is required" });
+        }
+        await assertCustomerHasPriceGroup(sales.contactId);
+
         if (!(await isTaxEnabled())) {
             sales = withoutTax(sales);
         }
@@ -249,6 +263,9 @@ export const updateSales = async (req: Request, res: Response) => {
             sales: updatedSales,
         });
     } catch (error) {
+        if (error instanceof CustomerGuardError) {
+            return res.status(error.statusCode).json({ message: error.message });
+        }
         console.error("Update sales error:", error);
         return res
             .status(500)
@@ -278,22 +295,32 @@ export const postSales = async (req: Request, res: Response) => {
                 );
             }
 
-            if (existing.contactId) {
-                const [customer] = await tx
-                    .select({
-                        id: contacts.id,
-                        name: contacts.name,
-                        contactType: contacts.contactType,
-                        creditLimit: contacts.creditLimit,
-                        invoiceLimit: contacts.invoiceLimit,
-                    })
-                    .from(contacts)
-                    .where(eq(contacts.id, existing.contactId))
-                    .for("update");
+            if (!existing.contactId) {
+                throw new Error("Sales customer is required");
+            }
 
-                if (!customer || customer.contactType !== "customer") {
-                    throw new Error("Sales customer not found");
-                }
+            const [customer] = await tx
+                .select({
+                    id: contacts.id,
+                    name: contacts.name,
+                    contactType: contacts.contactType,
+                    priceGroupId: contacts.priceGroupId,
+                    creditLimit: contacts.creditLimit,
+                    invoiceLimit: contacts.invoiceLimit,
+                })
+                .from(contacts)
+                .where(eq(contacts.id, existing.contactId))
+                .for("update");
+
+            if (!customer || customer.contactType !== "customer") {
+                throw new Error("Sales customer not found");
+            }
+
+            if (!customer.priceGroupId) {
+                throw new Error(
+                    `Customer "${customer.name}" does not have a Price Group assigned. Please configure the customer's Price Group first.`,
+                );
+            }
 
                 const creditLimit = Number(customer.creditLimit || 0);
                 const invoiceLimit = Number(customer.invoiceLimit || 0);
@@ -336,11 +363,10 @@ export const postSales = async (req: Request, res: Response) => {
                             : null,
                     ].filter((message): message is string => message !== null);
 
-                    if (exceededLimits.length > 0) {
-                        throw new Error(
-                            `Cannot post sales: customer "${customer.name}" exceeds ${exceededLimits.join(" and ")}`,
-                        );
-                    }
+                if (exceededLimits.length > 0) {
+                    throw new Error(
+                        `Cannot post sales: customer "${customer.name}" exceeds ${exceededLimits.join(" and ")}`,
+                    );
                 }
             }
 

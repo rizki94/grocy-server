@@ -16,6 +16,10 @@ export const contactInsertSchema = z.object({
     longitude: z.number().optional().nullable(),
     routeGroupId: z.string().uuid().optional().nullable(),
     salespersonId: z.string().uuid().optional().nullable(),
+    npwp: z.string().max(32).optional().nullable(),
+    nitku: z.string().max(32).optional().nullable(),
+    isPkp: z.boolean().optional(),
+    taxAddress: z.string().max(300).optional().nullable(),
     isActive: z.boolean(),
 });
 
@@ -23,5 +27,15 @@ export const contactUpdateSchema = contactInsertSchema.extend({
     id: z.string().min(1, "ID is required"),
 });
 
+export const customerInsertSchema = contactInsertSchema.extend({
+    priceGroupId: z.string().uuid("Price group is required"),
+});
+
+export const customerUpdateSchema = customerInsertSchema.extend({
+    id: z.string().min(1, "ID is required"),
+});
+
 export type UserInsertInput = z.infer<typeof contactInsertSchema>;
 export type UserUpdateInput = z.infer<typeof contactUpdateSchema>;
+export type CustomerInsertInput = z.infer<typeof customerInsertSchema>;
+export type CustomerUpdateInput = z.infer<typeof customerUpdateSchema>;

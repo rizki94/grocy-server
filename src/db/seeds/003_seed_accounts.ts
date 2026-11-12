@@ -12,6 +12,7 @@ import {
     contacts,
     products,
     productDetails,
+    productDetailPrices,
     warehouses,
     priceGroups,
     productAttributes,
@@ -335,23 +336,56 @@ export async function seedAccounts(dbInstance: typeof db) {
     }
     const pcsUnit = allUnits.find((u) => u.abbreviation === "pcs")!;
 
-    // 10. Contacts (Customer & Supplier)
-    await getOrCreate(contacts, eq(contacts.name, "General Customer"), {
-        contactType: "customer",
-        name: "General Customer",
-        address: "Jl. Pelanggan Umum No. 1, Jakarta",
-        phone: "0812-0000-0001",
-        email: "customer@example.com",
-    });
+    // 10. Price Groups (must exist before Contacts because customers require a priceGroupId)
+    const regularPriceGroup = await getOrCreate<typeof priceGroups.$inferSelect>(
+        priceGroups,
+        eq(priceGroups.name, "Regular Price"),
+        {
+            name: "Regular Price",
+            description: "Regular retail price",
+            isActive: true,
+        },
+    );
 
-    await getOrCreate(contacts, eq(contacts.name, "PT Berkah Abadi Retail"), {
-        contactType: "customer",
-        name: "PT Berkah Abadi Retail",
-        address: "Jl. Sudirman Kav. 45, Jakarta Selatan",
-        phone: "0812-3456-7890",
-        email: "purchasing@berkahabadi.example.com",
-        termOfPayment: 14,
-    });
+    // 11. Contacts (Customer & Supplier)
+    const generalCustomer = await getOrCreate<typeof contacts.$inferSelect>(
+        contacts,
+        eq(contacts.name, "General Customer"),
+        {
+            contactType: "customer",
+            name: "General Customer",
+            address: "Jl. Pelanggan Umum No. 1, Jakarta",
+            phone: "0812-0000-0001",
+            email: "customer@example.com",
+            priceGroupId: regularPriceGroup.id,
+        },
+    );
+    if (!generalCustomer.priceGroupId) {
+        await dbInstance
+            .update(contacts)
+            .set({ priceGroupId: regularPriceGroup.id })
+            .where(eq(contacts.id, generalCustomer.id));
+    }
+
+    const retailCustomer = await getOrCreate<typeof contacts.$inferSelect>(
+        contacts,
+        eq(contacts.name, "PT Berkah Abadi Retail"),
+        {
+            contactType: "customer",
+            name: "PT Berkah Abadi Retail",
+            address: "Jl. Sudirman Kav. 45, Jakarta Selatan",
+            phone: "0812-3456-7890",
+            email: "purchasing@berkahabadi.example.com",
+            termOfPayment: 14,
+            priceGroupId: regularPriceGroup.id,
+        },
+    );
+    if (!retailCustomer.priceGroupId) {
+        await dbInstance
+            .update(contacts)
+            .set({ priceGroupId: regularPriceGroup.id })
+            .where(eq(contacts.id, retailCustomer.id));
+    }
 
     await getOrCreate(contacts, eq(contacts.name, "General Supplier"), {
         contactType: "supplier",
@@ -369,13 +403,6 @@ export async function seedAccounts(dbInstance: typeof db) {
         phone: "021-4601234",
         email: "distributor@indofood.example.com",
         termOfPayment: 30,
-    });
-
-    // 11. Price Groups
-    await getOrCreate(priceGroups, eq(priceGroups.name, "Regular Price"), {
-        name: "Regular Price",
-        description: "Regular retail price",
-        isActive: true,
     });
 
     // 12. Payment Methods
@@ -526,7 +553,7 @@ export async function seedAccounts(dbInstance: typeof db) {
         );
 
         // Product detail (Main unit)
-        await getOrCreate<typeof productDetails.$inferSelect>(
+        const prodDetail = await getOrCreate<typeof productDetails.$inferSelect>(
             productDetails,
             eq(productDetails.skuId, p.skuId),
             {
@@ -542,6 +569,22 @@ export async function seedAccounts(dbInstance: typeof db) {
                 weight: p.weight,
                 isSellable: true,
                 isDefault: true,
+            },
+        );
+
+        // Product detail price for Regular Price group
+        await getOrCreate(
+            productDetailPrices,
+            and(
+                eq(productDetailPrices.productDetailId, prodDetail.id),
+                eq(productDetailPrices.priceGroupId, regularPriceGroup.id),
+                eq(productDetailPrices.branchId, hqBranch.id),
+            ),
+            {
+                productDetailId: prodDetail.id,
+                priceGroupId: regularPriceGroup.id,
+                branchId: hqBranch.id,
+                price: p.price,
             },
         );
 

@@ -63,7 +63,7 @@ export async function getActiveProducts(req: Request, res: Response) {
 
         const data = await db
             .select({
-                id: productDetails.id,
+                id: products.id,
                 productId: products.id,
                 productDetailId: productDetails.id,
                 name: products.name,
