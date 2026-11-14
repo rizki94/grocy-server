@@ -68,7 +68,7 @@ export const getPaginatedIncomes = async (req: Request, res: Response) => {
 
         const conditions = and(scope, searchCondition, dateCondition, statusCondition);
 
-        const [list, [totalCount]] = await Promise.all([
+        const [list, [totalCount], [summaryResult]] = await Promise.all([
             db
                 .select({
                     id: incomes.id,
@@ -88,18 +88,27 @@ export const getPaginatedIncomes = async (req: Request, res: Response) => {
                 .innerJoin(branches, eq(incomes.branchId, branches.id))
                 .where(conditions)
                 .orderBy(desc(incomes.createdAt))
-                .limit(pageSize)
-                .offset(offset),
+                .limit(pageSize === -1 ? 10000 : pageSize)
+                .offset(pageSize === -1 ? 0 : offset),
             db
                 .select({ count: sql<number>`count(*)` })
+                .from(incomes)
+                .where(conditions),
+            db
+                .select({
+                    totalAmountSum: sql<number>`COALESCE(SUM(${incomes.totalAmount}), 0)`,
+                })
                 .from(incomes)
                 .where(conditions),
         ]);
 
         res.json({
             rows: list,
-            pageCount: Math.ceil(Number(totalCount?.count || 0) / pageSize),
+            pageCount: pageSize === -1 ? 1 : Math.ceil(Number(totalCount?.count || 0) / pageSize),
             rowCount: Number(totalCount?.count || 0),
+            summary: {
+                totalAmountSum: Number(summaryResult?.totalAmountSum || 0),
+            },
             pageIndex,
             pageSize,
         });

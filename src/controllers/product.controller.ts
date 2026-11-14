@@ -740,6 +740,8 @@ export const getPaginatedProducts = async (req: Request, res: Response) => {
         const offset = pageIndex * pageSize;
 
         const search = (query.search as string) ?? "";
+        const category = query.category as string | undefined;
+
         const searchCondition = search
             ? or(
                 like(
@@ -748,6 +750,18 @@ export const getPaginatedProducts = async (req: Request, res: Response) => {
                 ),
             )
             : undefined;
+
+        const categoryCondition =
+            category && category !== "all"
+                ? sql`EXISTS (
+                    SELECT 1
+                    FROM ${productAttributeValues} pav
+                    JOIN ${productAttributes} pa ON pa.id = pav.attribute_id
+                    WHERE pav.product_id = ${products.id}
+                      AND (pa.name ILIKE '%kategori%' OR pa.name ILIKE '%category%')
+                      AND pav.value = ${category}
+                )`
+                : undefined;
 
         const sortColumns: Record<string, PgColumn> = {
             name: products.name,
@@ -759,7 +773,11 @@ export const getPaginatedProducts = async (req: Request, res: Response) => {
         const sortColumn = sortColumns[sortKey] ?? products.name;
 
         const branchCondition = productBranchFilter(products, req);
-        const finalCondition = and(searchCondition, branchCondition);
+        const finalCondition = and(
+            searchCondition,
+            categoryCondition,
+            branchCondition,
+        );
 
         const [productList, [totalCount]] = await Promise.all([
             db
@@ -790,6 +808,14 @@ export const getPaginatedProducts = async (req: Request, res: Response) => {
                         ORDER BY level ASC 
                         LIMIT 1
                     )`,
+                    category: sql<string | null>`(
+                        SELECT pav.value
+                        FROM ${productAttributeValues} pav
+                        JOIN ${productAttributes} pa ON pa.id = pav.attribute_id
+                        WHERE pav.product_id = ${products.id}
+                          AND (pa.name ILIKE '%kategori%' OR pa.name ILIKE '%category%')
+                        LIMIT 1
+                    )`,
                 })
                 .from(products)
                 .leftJoin(taxes, eq(taxes.id, products.taxId))
@@ -815,5 +841,117 @@ export const getPaginatedProducts = async (req: Request, res: Response) => {
     } catch (error) {
         console.error("Error fetching products:", error);
         res.status(500).json({ message: "Failed to fetch products" });
+    }
+};
+
+export const quickUpdatePrice = async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { prices } = req.body as {
+        prices: {
+            productDetailId: string;
+            priceGroupId: string;
+            price: number;
+        }[];
+    };
+
+    if (!prices || !Array.isArray(prices)) {
+        return res.status(400).json({ message: "Prices array is required" });
+    }
+
+    try {
+        const [product] = await db
+            .select()
+            .from(products)
+            .where(eq(products.id, id))
+            .limit(1);
+
+        if (!product) {
+            return res.status(404).json({ message: "Product not found" });
+        }
+
+        if (product.isGlobal && !req.isHq) {
+            return res.status(403).json({
+                message: "Global products can only be edited by HQ Branch users",
+            });
+        }
+
+        const globalPriceBranchId = await getHqBranchId();
+
+        for (const item of prices) {
+            const [existing] = await db
+                .select()
+                .from(productDetailPrices)
+                .where(
+                    and(
+                        eq(productDetailPrices.productDetailId, item.productDetailId),
+                        eq(productDetailPrices.priceGroupId, item.priceGroupId),
+                    ),
+                )
+                .limit(1);
+
+            if (existing) {
+                await db
+                    .update(productDetailPrices)
+                    .set({ price: item.price })
+                    .where(eq(productDetailPrices.id, existing.id));
+            } else {
+                await db.insert(productDetailPrices).values({
+                    productDetailId: item.productDetailId,
+                    priceGroupId: item.priceGroupId,
+                    branchId: globalPriceBranchId,
+                    price: item.price,
+                });
+            }
+        }
+
+        await CacheService.del("products:all");
+        await CacheService.del("products:active");
+
+        logAction(req, {
+            action: "update",
+            table: "product_detail_prices",
+            data: { productId: id, prices },
+            userId: req.user!.id,
+            msg: `quick updated prices for product "${product.name}"`,
+        });
+
+        return res.json({ message: "Prices updated successfully" });
+    } catch (err) {
+        console.error("QuickUpdatePrice error:", err);
+        return res.status(500).json({
+            message: "Failed to update prices",
+            error: (err as Error).message,
+        });
+    }
+};
+
+export const getProductCategories = async (req: Request, res: Response) => {
+    try {
+        const rows = await db
+            .select({
+                category: productAttributeValues.value,
+            })
+            .from(productAttributeValues)
+            .innerJoin(
+                productAttributes,
+                eq(productAttributes.id, productAttributeValues.attributeId),
+            )
+            .where(
+                or(
+                    like(sql`LOWER(${productAttributes.name})`, "%kategori%"),
+                    like(sql`LOWER(${productAttributes.name})`, "%category%"),
+                ),
+            )
+            .groupBy(productAttributeValues.value)
+            .orderBy(productAttributeValues.value);
+
+        const categories = rows
+            .map((r) => r.category)
+            .filter((c): c is string => Boolean(c));
+
+        return res.json(categories);
+    } catch (err) {
+        console.error("GetProductCategories error:", err);
+        return res.status(500).json({ message: "Failed to fetch categories" });
     }
 };

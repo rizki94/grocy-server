@@ -230,8 +230,8 @@ export const getPaginatedJournals = async (req: Request, res: Response) => {
                 .from(journals)
                 .where(and(scope, searchCondition, dateCondition, statusCondition))
                 .orderBy(sortOrder)
-                .limit(limit)
-                .offset(offset),
+                .limit(limit === -1 ? 10000 : limit)
+                .offset(limit === -1 ? 0 : offset),
 
             db
                 .select({ count: sql<number>`count(*)` })
@@ -243,8 +243,11 @@ export const getPaginatedJournals = async (req: Request, res: Response) => {
 
         res.json({
             rows: journalList,
-            pageCount: Math.ceil(total / limit),
+            pageCount: limit === -1 ? 1 : Math.ceil(total / limit),
             rowCount: total,
+            summary: {
+                totalJournals: total,
+            },
             pageIndex: page,
             pageSize: limit,
             sort: sort || "createdAt",

@@ -355,8 +355,8 @@ export const getPaginatedDispatches = async (req: Request, res: Response) => {
             .innerJoin(trucks, eq(trucks.id, deliveries.truckId))
             .where(whereClause)
             .orderBy(desc(deliveries.deliveryDate), desc(deliveries.createdAt))
-            .limit(pageSize)
-            .offset(offset);
+            .limit(pageSize === -1 ? 10000 : pageSize)
+            .offset(pageSize === -1 ? 0 : offset);
 
         // Enhance rows with total invoice count
         const deliveryIds = rows.map((r) => r.id);
@@ -382,10 +382,16 @@ export const getPaginatedDispatches = async (req: Request, res: Response) => {
             totalInvoices: itemsCounts[r.id] || 0,
         }));
 
+        const totalOrdersSum = Object.values(itemsCounts).reduce((acc, c) => acc + c, 0);
+
         return res.status(200).json({
             rows: enrichedRows,
             rowCount,
-            pageCount: Math.ceil(rowCount / pageSize),
+            pageCount: pageSize === -1 ? 1 : Math.ceil(rowCount / pageSize),
+            summary: {
+                totalDispatches: rowCount,
+                totalOrders: totalOrdersSum,
+            },
         });
     } catch (error) {
         console.error("Error fetching paginated dispatches:", error);

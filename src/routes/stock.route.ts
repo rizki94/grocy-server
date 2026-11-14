@@ -4,6 +4,7 @@ import {
     getProductWarehouseStock,
     getLowStockProducts,
     createRestockPurchaseDraft,
+    getExpiryStockReport,
 } from "@/controllers/stock.controller";
 import { Router } from "express";
 
@@ -17,5 +18,6 @@ stockRouter.post("/create-restock-po", createRestockPurchaseDraft);
 stockRouter.get("/product/:productId", getProductWarehouseStock);
 stockRouter.get("/monitoring", getMonitoringStock);
 stockRouter.get("/movement", getMovementStocks);
+stockRouter.get("/expiry", getExpiryStockReport);
 
 export default stockRouter;

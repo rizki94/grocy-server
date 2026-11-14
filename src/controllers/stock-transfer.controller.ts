@@ -375,7 +375,35 @@ export const getPaginatedTransfers = async (req: Request, res: Response) => {
 
         const [list, [totalCount]] = await Promise.all([
             db
-                .select()
+                .select({
+                    id: transactions.id,
+                    type: transactions.type,
+                    invoice: transactions.invoice,
+                    date: transactions.date,
+                    reference: transactions.reference,
+                    note: transactions.note,
+                    status: transactions.status,
+                    subtotal: transactions.subtotal,
+                    totalDiscount: transactions.totalDiscount,
+                    totalAmount: transactions.totalAmount,
+                    totalTax: transactions.totalTax,
+                    createdAt: transactions.createdAt,
+                    updatedAt: transactions.updatedAt,
+                    warehouseOutName: sql<string>`(
+                        SELECT w.name
+                        FROM transaction_details td
+                        JOIN warehouses w ON w.id = td.warehouse_id
+                        WHERE td.transaction_id = transactions.id AND td.movement_type = -1
+                        LIMIT 1
+                    )`,
+                    warehouseInName: sql<string>`(
+                        SELECT w.name
+                        FROM transaction_details td
+                        JOIN warehouses w ON w.id = td.warehouse_id
+                        WHERE td.transaction_id = transactions.id AND td.movement_type = 1
+                        LIMIT 1
+                    )`,
+                })
                 .from(transactions)
                 .where(
                     and(

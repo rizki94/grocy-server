@@ -7,6 +7,7 @@ import {
     updateSales,
     getPostedSalesByContact,
     cancelSales,
+    duplicateSales,
 } from "@/controllers/sales.controller";
 import { Router } from "express";
 
@@ -29,6 +30,7 @@ salesRouter.post("/", checkPeriodForTransactionMutation, createSales);
 salesRouter.put("/:id", checkPeriodForTransactionMutation, updateSales);
 salesRouter.put("/post/:id", checkPeriodForTransactionMutation, postSales);
 salesRouter.post("/:id/cancel", checkPeriodForTransactionMutation, cancelSales);
+salesRouter.post("/:id/duplicate", checkPeriodForTransactionMutation, duplicateSales);
 
 
 export default salesRouter;

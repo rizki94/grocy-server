@@ -6,6 +6,8 @@ import {
     updateProduct,
     getActiveProducts,
     getProductByBarcode,
+    quickUpdatePrice,
+    getProductCategories,
 } from "@/controllers/product.controller";
 import {
     downloadProductTemplate,
@@ -24,11 +26,13 @@ productRouter.post("/import/preview", importUpload.single("file"), previewProduc
 productRouter.post("/import", importProducts);
 
 productRouter.get("/", getAllProducts);
+productRouter.get("/categories", getProductCategories);
 productRouter.get("/paginated", getPaginatedProducts);
 productRouter.get("/active", getActiveProducts);
 productRouter.get("/:id", getProductById);
 productRouter.get("/barcode/:barcode", getProductByBarcode);
 productRouter.post("/", upload.array("images", 5), createProduct);
+productRouter.patch("/:id/quick-price", quickUpdatePrice);
 productRouter.put("/:id", upload.array("images", 5), updateProduct);
 
 export default productRouter;

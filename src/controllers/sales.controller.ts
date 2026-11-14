@@ -590,7 +590,7 @@ export const getPaginatedSales = async (req: Request, res: Response) => {
 
         const scope = branchScope(transactions.branchId, req);
 
-        const [salesList, [totalCount]] = await Promise.all([
+        const [salesList, [totalCount], [summaryResult]] = await Promise.all([
             db
                 .select({
                     id: transactions.id,
@@ -613,10 +613,25 @@ export const getPaginatedSales = async (req: Request, res: Response) => {
                     ),
                 )
                 .orderBy(order === "desc" ? desc(sortColumn) : asc(sortColumn))
-                .limit(pageSize)
-                .offset(offset),
+                .limit(pageSize === -1 ? 10000 : pageSize)
+                .offset(pageSize === -1 ? 0 : offset),
             db
                 .select({ count: sql<number>`count(*)` })
+                .from(transactions)
+                .innerJoin(contacts, eq(contacts.id, transactions.contactId))
+                .where(
+                    and(
+                        eq(transactions.type, "sales"),
+                        scope,
+                        searchCondition,
+                        filterCondition,
+                        dateCondition,
+                    ),
+                ),
+            db
+                .select({
+                    totalAmountSum: sql<number>`COALESCE(SUM(${transactions.totalAmount}), 0)`,
+                })
                 .from(transactions)
                 .innerJoin(contacts, eq(contacts.id, transactions.contactId))
                 .where(
@@ -632,8 +647,11 @@ export const getPaginatedSales = async (req: Request, res: Response) => {
 
         res.json({
             rows: salesList,
-            pageCount: Math.ceil(Number(totalCount?.count || 0) / pageSize),
+            pageCount: pageSize === -1 ? 1 : Math.ceil(Number(totalCount?.count || 0) / pageSize),
             rowCount: Number(totalCount?.count || 0),
+            summary: {
+                totalAmountSum: Number(summaryResult?.totalAmountSum || 0),
+            },
             pageIndex,
             pageSize,
             sort,
@@ -946,3 +964,87 @@ export const cancelSales = async (req: Request, res: Response) => {
         });
     }
 };
+
+export const duplicateSales = async (req: Request, res: Response) => {
+    const { id } = req.params;
+
+    try {
+        const rows = await purchaseById(id);
+        if (rows.length === 0) {
+            return res.status(404).json({ message: "Sales transaction not found" });
+        }
+
+        const { transaction } = rows[0];
+        const details = extractDetails(rows);
+
+        const branchCode = await resolveBranchCode(req);
+        const invoice = await generateInvoice("sales", branchCode);
+
+        const today = new Date().toISOString().split("T")[0];
+
+        const [newSales] = await db
+            .insert(transactions)
+            .values(
+                await withBranch(
+                    {
+                        type: "sales",
+                        invoice,
+                        contactId: transaction.contactId,
+                        marketplaceId: transaction.marketplaceId,
+                        date: today,
+                        termOfPayment: transaction.termOfPayment,
+                        reference: transaction.invoice ? `Ref: ${transaction.invoice}` : null,
+                        note: transaction.note,
+                        subtotal: transaction.subtotal,
+                        totalDiscount: transaction.totalDiscount,
+                        totalAmount: transaction.totalAmount,
+                        totalTax: transaction.totalTax,
+                        status: "order",
+                        userId: req.user!.id,
+                    },
+                    req,
+                ),
+            )
+            .returning();
+
+        for (const detail of details) {
+            await db.insert(transactionDetails).values({
+                transactionId: newSales.id,
+                productId: detail.productId,
+                productDetailId: detail.productDetailId,
+                warehouseId: detail.warehouseId,
+                qty: detail.qty,
+                baseRatio: detail.baseRatio,
+                price: detail.price,
+                discount: detail.discount,
+                amount: detail.amount,
+                taxRate: detail.taxRate,
+                unitCost: 0,
+                totalCost: 0,
+                movementType: -1,
+            });
+        }
+
+        logAction(req, {
+            action: "insert",
+            table: "transactions",
+            data: {
+                transaction: newSales,
+                details,
+            },
+            userId: req.user!.id,
+            msg: `duplicated sales from ${transaction.invoice} to ${newSales.invoice}`,
+        });
+
+        return res.status(201).json({
+            message: "Sales duplicated successfully",
+            sales: newSales,
+        });
+    } catch (error: any) {
+        console.error("Duplicate sales error:", error);
+        return res.status(500).json({
+            message: error.message || "Failed to duplicate sales",
+        });
+    }
+};
+

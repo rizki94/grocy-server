@@ -8,6 +8,7 @@ import {
     getLastPurchasePrice,
     getPostedPurchasesByContact,
     cancelPurchase,
+    duplicatePurchase,
 } from "@/controllers/purchase.controller";
 import { Router } from "express";
 
@@ -24,6 +25,7 @@ purchaseRouter.post("/", checkPeriodForTransactionMutation, createPurchase);
 purchaseRouter.put("/:id", checkPeriodForTransactionMutation, updatePurchase);
 purchaseRouter.put("/post/:id", checkPeriodForTransactionMutation, postPurchase);
 purchaseRouter.post("/:id/cancel", checkPeriodForTransactionMutation, cancelPurchase);
+purchaseRouter.post("/:id/duplicate", checkPeriodForTransactionMutation, duplicatePurchase);
 
 
 export default purchaseRouter;

@@ -24,6 +24,7 @@ import {
     gte,
     lte,
     ne,
+    gt,
 } from "drizzle-orm";
 import { PgColumn } from "drizzle-orm/pg-core";
 import { Request, Response } from "express";
@@ -51,6 +52,7 @@ export const getMonitoringStock = async (req: Request, res: Response) => {
     const warehouseId = query.warehouseId as string | undefined;
     const availableOnly =
         query.availableOnly === "true" || query.onlyAvailable === "true";
+    const criticalOnly = query.criticalOnly === "true";
 
     const searchCondition = search
         ? or(
@@ -65,12 +67,25 @@ export const getMonitoringStock = async (req: Request, res: Response) => {
     const availableCondition = availableOnly ? ne(stocks.qty, 0) : undefined;
     const branchCondition = branchScope(warehouses.branchId, req);
     const prodCondition = productBranchFilter(products, req);
+    const criticalCondition = criticalOnly
+        ? and(
+              gt(products.reorderLevel, 0),
+              sql`(
+                  SELECT coalesce(sum(s2.qty), 0)
+                  FROM stocks s2
+                  WHERE s2.product_id = ${stocks.productId}
+                    AND s2.warehouse_id = ${stocks.warehouseId}
+              ) <= ${products.reorderLevel}`,
+          )
+        : undefined;
+
     const filterCondition = and(
         searchCondition,
         warehouseCondition,
         branchCondition,
         prodCondition,
         availableCondition,
+        criticalCondition,
     );
 
     const order = (query.order as string) === "desc" ? "desc" : "asc";
@@ -226,6 +241,7 @@ export const getMovementStocks = async (req: Request, res: Response) => {
         | string
         | undefined;
     const contactId = (query.contactId || query.contact) as string | undefined;
+    const type = query.type as string | undefined;
     const from = (query.from || query.startDate) as string | undefined;
     const to = (query.to || query.endDate) as string | undefined;
 
@@ -250,6 +266,9 @@ export const getMovementStocks = async (req: Request, res: Response) => {
     if (contactId && contactId !== "all") {
         conditions.push(eq(transactions.contactId, contactId));
     }
+    if (type && type !== "all") {
+        conditions.push(eq(transactions.type, type as any));
+    }
     if (fromDate) {
         conditions.push(gte(transactions.date, fromDate));
     }
@@ -273,6 +292,7 @@ export const getMovementStocks = async (req: Request, res: Response) => {
                     defaultUnitName: productUnits.name,
                     baseQty: stockMovements.qty,
                     type: stockMovements.type,
+                    transactionType: transactions.type,
                 })
                 .from(stockMovements)
                 .innerJoin(stocks, eq(stocks.id, stockMovements.stockId))
@@ -781,5 +801,110 @@ export const createRestockPurchaseDraft = async (req: Request, res: Response) =>
     } catch (error: any) {
         console.error("Error creating restock draft PO:", error);
         res.status(500).json({ message: error.message || "Failed to create restock draft PO" });
+    }
+};
+
+export const getExpiryStockReport = async (req: Request, res: Response) => {
+    try {
+        const query = req.query;
+        const pageIndex = parseInt(query.pageIndex as string) || 0;
+        const pageSize = parseInt(query.pageSize as string) || 10;
+        const offset = pageIndex * pageSize;
+        const search = (query.search as string) ?? "";
+        const warehouseId = query.warehouseId as string | undefined;
+        const statusFilter = (query.status as string) || "all"; // all, expired, near_30, near_60, near_90
+
+        const branchCondition = branchScope(warehouses.branchId, req);
+        const prodCondition = productBranchFilter(products, req);
+
+        const conditions = [
+            branchCondition,
+            prodCondition,
+            gt(stocks.qty, 0),
+            sql`${stocks.expiryDate} IS NOT NULL`,
+        ];
+
+        if (warehouseId && warehouseId !== "all") {
+            conditions.push(eq(stocks.warehouseId, warehouseId));
+        }
+
+        if (search) {
+            conditions.push(
+                or(
+                    like(sql`LOWER(${products.name})`, `%${search.toLowerCase()}%`),
+                    like(sql`LOWER(${stocks.batchNumber})`, `%${search.toLowerCase()}%`),
+                ),
+            );
+        }
+
+        const nowSql = sql`CURRENT_DATE`;
+        if (statusFilter === "expired") {
+            conditions.push(sql`${stocks.expiryDate} < ${nowSql}`);
+        } else if (statusFilter === "near_30") {
+            conditions.push(
+                sql`${stocks.expiryDate} >= ${nowSql} AND ${stocks.expiryDate} <= (${nowSql} + INTERVAL '30 days')`,
+            );
+        } else if (statusFilter === "near_60") {
+            conditions.push(
+                sql`${stocks.expiryDate} >= ${nowSql} AND ${stocks.expiryDate} <= (${nowSql} + INTERVAL '60 days')`,
+            );
+        } else if (statusFilter === "near_90") {
+            conditions.push(
+                sql`${stocks.expiryDate} >= ${nowSql} AND ${stocks.expiryDate} <= (${nowSql} + INTERVAL '90 days')`,
+            );
+        }
+
+        const filterCondition = and(...conditions);
+
+        const [list, [totalCount]] = await Promise.all([
+            db
+                .select({
+                    id: stocks.id,
+                    productId: stocks.productId,
+                    productName: products.name,
+                    warehouseId: stocks.warehouseId,
+                    warehouseName: warehouses.name,
+                    batchNumber: stocks.batchNumber,
+                    expiryDate: stocks.expiryDate,
+                    qty: stocks.qty,
+                    unitName: productUnits.name,
+                    daysRemaining: sql<number>`CAST(${stocks.expiryDate} - ${nowSql} AS INTEGER)`,
+                })
+                .from(stocks)
+                .innerJoin(products, eq(products.id, stocks.productId))
+                .leftJoin(warehouses, eq(warehouses.id, stocks.warehouseId))
+                .leftJoin(
+                    productDetails,
+                    and(
+                        eq(productDetails.productId, products.id),
+                        eq(productDetails.baseRatio, 1),
+                    ),
+                )
+                .leftJoin(
+                    productUnits,
+                    eq(productUnits.id, productDetails.unitId),
+                )
+                .where(filterCondition)
+                .orderBy(asc(stocks.expiryDate), products.name)
+                .limit(pageSize)
+                .offset(offset),
+            db
+                .select({ count: sql<number>`count(*)` })
+                .from(stocks)
+                .innerJoin(products, eq(products.id, stocks.productId))
+                .leftJoin(warehouses, eq(warehouses.id, stocks.warehouseId))
+                .where(filterCondition),
+        ]);
+
+        return res.json({
+            rows: list,
+            pageCount: Math.ceil(Number(totalCount?.count || 0) / pageSize),
+            rowCount: Number(totalCount?.count || 0),
+            pageIndex,
+            pageSize,
+        });
+    } catch (error: any) {
+        console.error("Error fetching expiry stock report:", error);
+        return res.status(500).json({ message: "Failed to fetch expiry stock report" });
     }
 };

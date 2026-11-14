@@ -27,6 +27,8 @@ import {
     ne,
     notInArray,
     exists,
+    gte,
+    lte,
 } from "drizzle-orm";
 import { PgColumn } from "drizzle-orm/pg-core";
 import {
@@ -58,6 +60,21 @@ export const getPaginatedPayments = async (req: Request, res: Response) => {
         const offset = pageIndex * pageSize;
 
         const search = (query.search as string) ?? "";
+        const from = query.from ? new Date(query.from as string) : undefined;
+        const to = query.to ? new Date(query.to as string) : undefined;
+
+        const dateCondition =
+            from && to
+                ? and(
+                      gte(payments.date, from.toISOString().slice(0, 10)),
+                      lte(payments.date, to.toISOString().slice(0, 10)),
+                  )
+                : from
+                  ? gte(payments.date, from.toISOString().slice(0, 10))
+                  : to
+                    ? lte(payments.date, to.toISOString().slice(0, 10))
+                    : undefined;
+
         const scopeData = eq(payments.type, "payable");
         const searchCondition = search
             ? or(
@@ -107,7 +124,7 @@ export const getPaginatedPayments = async (req: Request, res: Response) => {
 
         const scope = branchScope(payments.branchId, req);
 
-        const [payableList, totalCount] = await Promise.all([
+        const [payableList, totalCount, summaryResult] = await Promise.all([
             db
                 .select({
                     id: payments.id,
@@ -128,22 +145,32 @@ export const getPaginatedPayments = async (req: Request, res: Response) => {
                     transactions,
                     eq(transactions.id, openInvoices.transactionId),
                 )
-                .where(and(scopeData, scope, searchCondition, filterCondition))
+                .where(and(scopeData, scope, searchCondition, filterCondition, dateCondition))
                 .groupBy(payments.id, contacts.name)
                 .orderBy(order === "desc" ? desc(sortColumn) : asc(sortColumn))
-                .limit(pageSize)
-                .offset(offset),
+                .limit(pageSize === -1 ? 10000 : pageSize)
+                .offset(pageSize === -1 ? 0 : offset),
             db
                 .select({ count: sql<number>`count(DISTINCT ${payments.id})` })
                 .from(payments)
                 .innerJoin(contacts, eq(contacts.id, payments.contactId))
-                .where(and(scopeData, scope, searchCondition, filterCondition)),
+                .where(and(scopeData, scope, searchCondition, filterCondition, dateCondition)),
+            db
+                .select({
+                    totalAmountSum: sql<number>`COALESCE(SUM(${payments.totalAmount}), 0)`,
+                })
+                .from(payments)
+                .innerJoin(contacts, eq(contacts.id, payments.contactId))
+                .where(and(scopeData, scope, searchCondition, filterCondition, dateCondition)),
         ]);
 
         res.json({
             rows: payableList,
-            pageCount: Math.ceil(Number(totalCount[0]?.count || 0) / pageSize),
+            pageCount: pageSize === -1 ? 1 : Math.ceil(Number(totalCount[0]?.count || 0) / pageSize),
             rowCount: Number(totalCount[0]?.count || 0),
+            summary: {
+                totalAmountSum: Number(summaryResult[0]?.totalAmountSum || 0),
+            },
             pageIndex,
             pageSize,
             sort: sortKey,

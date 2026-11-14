@@ -171,6 +171,7 @@ export async function seedAccounts(dbInstance: typeof db) {
         { code: "report.gl_balance.view", description: "View GL Balances", group: "report" },
         { code: "report.customer_outstanding.view", description: "View Customer Outstanding AR", group: "report" },
         { code: "report.transaction_summary.view", description: "View Transaction Summary Report", group: "report" },
+        { code: "report.cogs.view", description: "View COGS Report", group: "report" },
 
         // Settings
         { code: "settings.role.view", description: "View Roles", group: "settings" },

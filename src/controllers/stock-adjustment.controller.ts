@@ -403,7 +403,28 @@ export const getPaginatedAdjustments = async (req: Request, res: Response) => {
 
         const [list, [totalCount]] = await Promise.all([
             db
-                .select()
+                .select({
+                    id: transactions.id,
+                    type: transactions.type,
+                    invoice: transactions.invoice,
+                    date: transactions.date,
+                    reference: transactions.reference,
+                    note: transactions.note,
+                    status: transactions.status,
+                    subtotal: transactions.subtotal,
+                    totalDiscount: transactions.totalDiscount,
+                    totalAmount: transactions.totalAmount,
+                    totalTax: transactions.totalTax,
+                    createdAt: transactions.createdAt,
+                    updatedAt: transactions.updatedAt,
+                    warehouseName: sql<string>`(
+                        SELECT w.name
+                        FROM transaction_details td
+                        JOIN warehouses w ON w.id = td.warehouse_id
+                        WHERE td.transaction_id = transactions.id
+                        LIMIT 1
+                    )`,
+                })
                 .from(transactions)
                 .where(
                     and(
