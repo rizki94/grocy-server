@@ -8,6 +8,10 @@ import {
     getProductByBarcode,
     quickUpdatePrice,
     getProductCategories,
+    getProductAttributeSummary,
+    bulkUpdateProductAttribute,
+    getProductBranchSummary,
+    bulkUpdateProductBranches,
 } from "@/controllers/product.controller";
 import {
     downloadProductTemplate,
@@ -27,6 +31,10 @@ productRouter.post("/import", importProducts);
 
 productRouter.get("/", getAllProducts);
 productRouter.get("/categories", getProductCategories);
+productRouter.get("/branch-summary", getProductBranchSummary);
+productRouter.post("/bulk-branches", bulkUpdateProductBranches);
+productRouter.get("/attributes/:attributeId/summary", getProductAttributeSummary);
+productRouter.put("/bulk-attributes", bulkUpdateProductAttribute);
 productRouter.get("/paginated", getPaginatedProducts);
 productRouter.get("/active", getActiveProducts);
 productRouter.get("/:id", getProductById);

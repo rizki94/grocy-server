@@ -762,3 +762,43 @@ export const cancelSalesReturn = async (req: Request, res: Response) => {
         });
     }
 };
+
+export const deleteSalesReturn = async (req: Request, res: Response) => {
+    const { id } = req.params;
+    try {
+        const [salesReturn] = await db
+            .select()
+            .from(transactions)
+            .where(and(eq(transactions.id, id), eq(transactions.type, "sales_return")));
+
+        if (!salesReturn) {
+            return res.status(404).json({ message: "Sales return not found" });
+        }
+
+        if (salesReturn.status === "posted" || salesReturn.status === "paid") {
+            return res.status(400).json({
+                message: "Retur penjualan yang sudah dipost tidak dapat dihapus",
+            });
+        }
+
+        await db.delete(transactionDetails).where(eq(transactionDetails.transactionId, id));
+        await db.delete(transactions).where(eq(transactions.id, id));
+
+        logAction(req, {
+            action: "delete",
+            table: "transactions",
+            id: salesReturn.invoice,
+            userId: req.user!.id,
+            msg: `deleted sales return invoice ${salesReturn.invoice}`,
+        });
+
+        return res.status(200).json({
+            message: `Retur penjualan ${salesReturn.invoice} berhasil dihapus`,
+        });
+    } catch (error: any) {
+        console.error("Delete sales return error:", error);
+        return res.status(500).json({
+            message: error.message || "Failed to delete sales return",
+        });
+    }
+};

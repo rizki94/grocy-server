@@ -258,3 +258,42 @@ export const getPaginatedJournals = async (req: Request, res: Response) => {
         res.status(500).json({ message: "Failed to fetch journals" });
     }
 };
+
+export const deleteJournalController = async (req: Request, res: Response) => {
+    const { id } = req.params;
+    try {
+        const [journal] = await db
+            .select()
+            .from(journals)
+            .where(eq(journals.id, id));
+
+        if (!journal) {
+            return res.status(404).json({ message: "Journal not found" });
+        }
+
+        if (journal.status === "posted") {
+            return res.status(400).json({
+                message: "Jurnal yang sudah dipost tidak dapat dihapus",
+            });
+        }
+
+        await db.delete(journals).where(eq(journals.id, id));
+
+        logAction(req, {
+            action: "delete",
+            table: "journals",
+            id: journal.invoice,
+            userId: req.user!.id,
+            msg: `deleted journal ${journal.invoice}`,
+        });
+
+        return res.status(200).json({
+            message: `Jurnal ${journal.invoice} berhasil dihapus`,
+        });
+    } catch (err: any) {
+        console.error("Delete journal error:", err);
+        return res.status(500).json({
+            message: err.message || "Failed to delete journal",
+        });
+    }
+};

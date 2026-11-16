@@ -1048,3 +1048,43 @@ export const duplicateSales = async (req: Request, res: Response) => {
     }
 };
 
+export const deleteSales = async (req: Request, res: Response) => {
+    const { id } = req.params;
+    try {
+        const [sales] = await db
+            .select()
+            .from(transactions)
+            .where(and(eq(transactions.id, id), eq(transactions.type, "sales")));
+
+        if (!sales) {
+            return res.status(404).json({ message: "Sales not found" });
+        }
+
+        if (sales.status === "posted") {
+            return res.status(400).json({
+                message: "Transaksi penjualan yang sudah dipost tidak dapat dihapus",
+            });
+        }
+
+        await db.delete(transactionDetails).where(eq(transactionDetails.transactionId, id));
+        await db.delete(transactions).where(eq(transactions.id, id));
+
+        logAction(req, {
+            action: "delete",
+            table: "transactions",
+            id: sales.invoice,
+            userId: req.user!.id,
+            msg: `deleted sales invoice ${sales.invoice}`,
+        });
+
+        return res.status(200).json({
+            message: `Faktur penjualan ${sales.invoice} berhasil dihapus`,
+        });
+    } catch (error: any) {
+        console.error("Delete sales error:", error);
+        return res.status(500).json({
+            message: error.message || "Failed to delete sales",
+        });
+    }
+};
+

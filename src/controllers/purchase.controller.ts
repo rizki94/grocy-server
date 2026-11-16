@@ -946,3 +946,43 @@ export const duplicatePurchase = async (req: Request, res: Response) => {
     }
 };
 
+export const deletePurchase = async (req: Request, res: Response) => {
+    const { id } = req.params;
+    try {
+        const [purchase] = await db
+            .select()
+            .from(transactions)
+            .where(and(eq(transactions.id, id), eq(transactions.type, "purchase")));
+
+        if (!purchase) {
+            return res.status(404).json({ message: "Purchase not found" });
+        }
+
+        if (purchase.status === "posted") {
+            return res.status(400).json({
+                message: "Transaksi pembelian yang sudah dipost tidak dapat dihapus",
+            });
+        }
+
+        await db.delete(transactionDetails).where(eq(transactionDetails.transactionId, id));
+        await db.delete(transactions).where(eq(transactions.id, id));
+
+        logAction(req, {
+            action: "delete",
+            table: "transactions",
+            id: purchase.invoice,
+            userId: req.user!.id,
+            msg: `deleted purchase invoice ${purchase.invoice}`,
+        });
+
+        return res.status(200).json({
+            message: `Faktur pembelian ${purchase.invoice} berhasil dihapus`,
+        });
+    } catch (error: any) {
+        console.error("Delete purchase error:", error);
+        return res.status(500).json({
+            message: error.message || "Failed to delete purchase",
+        });
+    }
+};
+

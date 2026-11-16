@@ -7,6 +7,7 @@ import {
     postAdjustment,
     updateAdjustment,
     cancelAdjustment,
+    deleteAdjustment,
 } from "../controllers/stock-adjustment.controller";
 
 const router = Router();
@@ -23,5 +24,6 @@ router.post("/", createAdjustment);
 router.put("/:id", updateAdjustment);
 router.post("/:id/post", postAdjustment);
 router.post("/:id/cancel", cancelAdjustment);
+router.delete("/:id", deleteAdjustment);
 
 export default router;

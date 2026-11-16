@@ -419,3 +419,42 @@ export const getPaymentsByTransaction = async (req: Request, res: Response) => {
     }
 };
 
+export const deletePaymentController = async (req: Request, res: Response) => {
+    const { id } = req.params;
+    try {
+        const [payment] = await db
+            .select()
+            .from(payments)
+            .where(eq(payments.id, id));
+
+        if (!payment) {
+            return res.status(404).json({ message: "Payment not found" });
+        }
+
+        if (payment.status === "posted") {
+            return res.status(400).json({
+                message: "Pembayaran hutang yang sudah dipost tidak dapat dihapus",
+            });
+        }
+
+        await db.delete(payments).where(eq(payments.id, id));
+
+        logAction(req, {
+            action: "delete",
+            table: "payments",
+            id: payment.reference || payment.id,
+            userId: req.user!.id,
+            msg: `deleted payment ${payment.reference || payment.id}`,
+        });
+
+        return res.status(200).json({
+            message: "Pembayaran berhasil dihapus",
+        });
+    } catch (err: any) {
+        console.error("Delete payment error:", err);
+        return res.status(500).json({
+            message: err.message || "Failed to delete payment",
+        });
+    }
+};
+

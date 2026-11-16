@@ -414,3 +414,42 @@ export const voidReceivableController = async (req: Request, res: Response) => {
         });
     }
 };
+
+export const deleteReceivableController = async (req: Request, res: Response) => {
+    const { id } = req.params;
+    try {
+        const [receivable] = await db
+            .select()
+            .from(payments)
+            .where(eq(payments.id, id));
+
+        if (!receivable) {
+            return res.status(404).json({ message: "Receivable not found" });
+        }
+
+        if (receivable.status === "posted") {
+            return res.status(400).json({
+                message: "Pelunasan piutang yang sudah dipost tidak dapat dihapus",
+            });
+        }
+
+        await db.delete(payments).where(eq(payments.id, id));
+
+        logAction(req, {
+            action: "delete",
+            table: "payments",
+            id: receivable.reference || receivable.id,
+            userId: req.user!.id,
+            msg: `deleted receivable ${receivable.reference || receivable.id}`,
+        });
+
+        return res.status(200).json({
+            message: "Pelunasan piutang berhasil dihapus",
+        });
+    } catch (err: any) {
+        console.error("Delete receivable error:", err);
+        return res.status(500).json({
+            message: err.message || "Failed to delete receivable",
+        });
+    }
+};

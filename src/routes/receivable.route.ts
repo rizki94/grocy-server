@@ -6,6 +6,7 @@ import {
     postReceivableController,
     updateReceivableController,
     voidReceivableController,
+    deleteReceivableController,
 } from "@/controllers/receivable.controller";
 import { Router } from "express";
 
@@ -18,5 +19,6 @@ receivableRouter.post("/", createReceivableController);
 receivableRouter.put("/:id", updateReceivableController);
 receivableRouter.put("/post/:id", postReceivableController);
 receivableRouter.post("/:id/cancel", voidReceivableController);
+receivableRouter.delete("/:id", deleteReceivableController);
 
 export default receivableRouter;

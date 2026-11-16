@@ -16,6 +16,8 @@ import {
     accountMappings,
     productDetails,
     settings,
+    vouchers,
+    voucherUsages,
 } from "@/db/schemas";
 import { generateInvoice, generateJournalInvoice } from "@/helpers/generate-invoice";
 import { updateStockForTransaction } from "@/repositories/stock.repository";
@@ -528,11 +530,35 @@ export async function checkout(req: Request, res: Response) {
                 }
             }
 
+            // 8. CRM Voucher Usage & Member Loyalty Points
+            if (req.body.voucherId) {
+                await tx.insert(voucherUsages).values({
+                    voucherId: req.body.voucherId,
+                    transactionId: transaction.id,
+                    contactId: customer?.id || null,
+                    discountAmount: String(req.body.voucherDiscount || totalDiscount || 0),
+                });
+                await tx.update(vouchers)
+                    .set({ usedCount: sql`${vouchers.usedCount} + 1` })
+                    .where(eq(vouchers.id, req.body.voucherId));
+            }
+
+            let earnedPoints = 0;
+            if (customer?.isMember) {
+                earnedPoints = Math.floor(Number(transaction.totalAmount) / 10000);
+                if (earnedPoints > 0) {
+                    await tx.update(contacts)
+                        .set({ points: sql`${contacts.points} + ${earnedPoints}` })
+                        .where(eq(contacts.id, customer.id));
+                }
+            }
+
             return {
                 ...transaction,
                 customerName: customer?.name || "General Customer",
                 customerPhone: customer?.phone || "",
                 offlineInvoice: req.body.offlineInvoice,
+                earnedPoints,
             };
         });
 

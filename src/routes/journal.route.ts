@@ -5,6 +5,7 @@ import {
     getPaginatedJournals,
     postJournal,
     updateJournalController,
+    deleteJournalController,
 } from "@/controllers/journal.controller";
 import { Router } from "express";
 
@@ -16,5 +17,6 @@ journalRoute.post("/", createJournalController);
 journalRoute.put("/post/:id", postJournal);
 journalRoute.get("/:id", getJournalById);
 journalRoute.put("/:id", updateJournalController);
+journalRoute.delete("/:id", deleteJournalController);
 
 export default journalRoute;

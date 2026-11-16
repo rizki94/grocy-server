@@ -49,6 +49,9 @@ async function main() {
         { name: "Settings & Setup", code: "settings" },
         { name: "Point of Sale", code: "pos" },
         { name: "System Administration", code: "sysadmin" },
+        { name: "HRD & Payroll", code: "hrd" },
+        { name: "Delivery & Dispatch", code: "dispatch" },
+        { name: "Marketplace Integration", code: "marketplace" },
     ];
 
     const permissionGroupsMap: Record<string, string> = {};
@@ -75,6 +78,9 @@ async function main() {
         { code: "product.update", description: "Update Product", group: "product" },
         { code: "product.view", description: "View Products", group: "product" },
         { code: "product.delete", description: "Delete Product", group: "product" },
+        { code: "product.attribute.view", description: "View Product Attributes", group: "product" },
+        { code: "product.attribute.manage", description: "Manage Product Attributes", group: "product" },
+        { code: "product.branch.manage", description: "Manage Product Branches", group: "product" },
 
         // Contact
         { code: "contact.customer.view", description: "View Customers", group: "contact" },
@@ -144,6 +150,7 @@ async function main() {
         { code: "report.gl_balance.view", description: "View GL Balances", group: "report" },
         { code: "report.customer_outstanding.view", description: "View Customer Outstanding AR", group: "report" },
         { code: "report.transaction_summary.view", description: "View Transaction Summary Report", group: "report" },
+        { code: "report.aging.view", description: "View Aging AR & AP Reports", group: "report" },
 
         // Settings
         { code: "settings.role.view", description: "View Roles", group: "settings" },
@@ -175,11 +182,54 @@ async function main() {
         { code: "settings.branch.update", description: "Update Branch", group: "settings" },
         { code: "settings.branch.delete", description: "Delete Branch", group: "settings" },
 
+        { code: "settings.route_group.view", description: "View Route Groups", group: "settings" },
+        { code: "settings.route_group.create", description: "Create Route Group", group: "settings" },
+        { code: "settings.route_group.update", description: "Update Route Group", group: "settings" },
+
         // POS
         { code: "pos.interface.view", description: "View POS Interface", group: "pos" },
 
         // SysAdmin
         { code: "sysadmin.access", description: "Access System Administration", group: "sysadmin" },
+
+        // HRD & Payroll
+        { code: "hrd.employees.view", description: "View HRD Employees", group: "hrd" },
+        { code: "hrd.employees.create", description: "Create HRD Employee", group: "hrd" },
+        { code: "hrd.employees.update", description: "Update HRD Employee", group: "hrd" },
+        { code: "hrd.employees.delete", description: "Delete HRD Employee", group: "hrd" },
+        { code: "hrd.attendance.view", description: "View Attendance Records", group: "hrd" },
+        { code: "hrd.attendance.create", description: "Create Attendance Record", group: "hrd" },
+        { code: "hrd.attendance.update", description: "Update Attendance Record", group: "hrd" },
+        { code: "hrd.payroll.view", description: "View Payroll", group: "hrd" },
+        { code: "hrd.payroll.create", description: "Create Payroll", group: "hrd" },
+        { code: "hrd.payroll.update", description: "Update Payroll", group: "hrd" },
+        { code: "hrd.work_shifts.view", description: "View Work Shifts", group: "hrd" },
+        { code: "hrd.work_shifts.create", description: "Create Work Shift", group: "hrd" },
+        { code: "hrd.work_shifts.update", description: "Update Work Shift", group: "hrd" },
+
+        // Delivery & Dispatch
+        { code: "dispatch.view", description: "View Delivery Dispatch", group: "dispatch" },
+        { code: "dispatch.create", description: "Create Delivery Dispatch", group: "dispatch" },
+        { code: "dispatch.update", description: "Update Delivery Dispatch", group: "dispatch" },
+        { code: "dispatch.delete", description: "Delete Delivery Dispatch", group: "dispatch" },
+        { code: "dispatch.driver.view", description: "View Drivers", group: "dispatch" },
+        { code: "dispatch.driver.create", description: "Create Driver", group: "dispatch" },
+        { code: "dispatch.driver.update", description: "Update Driver", group: "dispatch" },
+        { code: "dispatch.driver.delete", description: "Delete Driver", group: "dispatch" },
+        { code: "dispatch.truck.view", description: "View Trucks", group: "dispatch" },
+        { code: "dispatch.truck.create", description: "Create Truck", group: "dispatch" },
+        { code: "dispatch.truck.update", description: "Update Truck", group: "dispatch" },
+        { code: "dispatch.truck.delete", description: "Delete Truck", group: "dispatch" },
+        { code: "dispatch.route.view", description: "View Delivery Routes", group: "dispatch" },
+        { code: "dispatch.route.create", description: "Create Delivery Route", group: "dispatch" },
+        { code: "dispatch.route.update", description: "Update Delivery Route", group: "dispatch" },
+        { code: "dispatch.route.delete", description: "Delete Delivery Route", group: "dispatch" },
+
+        // Marketplace
+        { code: "marketplace.view", description: "View Marketplaces", group: "marketplace" },
+        { code: "marketplace.create", description: "Create Marketplace Connection", group: "marketplace" },
+        { code: "marketplace.update", description: "Update Marketplace Connection", group: "marketplace" },
+        { code: "marketplace.delete", description: "Delete Marketplace Connection", group: "marketplace" },
     ];
 
     const insertedPermissions: (typeof permissions.$inferSelect)[] = [];

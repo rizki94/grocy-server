@@ -1,6 +1,8 @@
 import {
     boolean,
+    date,
     decimal,
+    integer,
     pgEnum,
     pgTable,
     smallint,
@@ -34,6 +36,11 @@ export const contacts = pgTable("contacts", {
     nitku: text("nitku"),
     isPkp: boolean("is_pkp").notNull().default(false),
     taxAddress: text("tax_address"),
+    isMember: boolean("is_member").notNull().default(false),
+    memberCode: text("member_code"),
+    memberTier: text("member_tier").default("standard"),
+    points: integer("points").default(0),
+    birthDate: date("birth_date"),
     isActive: boolean("is_active").notNull().default(true),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")

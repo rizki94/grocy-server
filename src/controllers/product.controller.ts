@@ -11,6 +11,7 @@ import {
     stockLayers,
     stocks,
     taxes,
+    branches,
     productBranches,
     warehouses,
 } from "@/db/schemas";
@@ -71,6 +72,7 @@ export async function getActiveProducts(req: Request, res: Response) {
                 skuId: productDetails.skuId,
                 unitId: productDetails.unitId,
                 unitName: sql<string>`COALESCE(${productUnits.name}, 'None')`,
+                unitAbbreviation: sql<string>`COALESCE(${productUnits.abbreviation}, ${productUnits.name}, '')`,
                 baseRatio: sql<number>`COALESCE(${productDetails.baseRatio}, 1)`,
                 cost: sql<number>`COALESCE(${productDetails.cost}, 0)`,
                 taxRate: sql<number>`COALESCE(${taxes.rate}, 0)`,
@@ -281,6 +283,7 @@ export const getProductByBarcode = async (req: Request, res: Response) => {
                 skuId: productDetails.skuId,
                 unitId: productDetails.unitId,
                 unitName: productUnits.name,
+                unitAbbreviation: productUnits.abbreviation,
                 baseRatio: productDetails.baseRatio,
                 cost: productDetails.cost,
                 taxRate: sql<number>`COALESCE(${taxes.rate}, 0)`,
@@ -773,10 +776,56 @@ export const getPaginatedProducts = async (req: Request, res: Response) => {
         const sortColumn = sortColumns[sortKey] ?? products.name;
 
         const branchCondition = productBranchFilter(products, req);
+
+        const filterBranchId = (query.filterBranchId as string) || (query.branchId as string) || undefined;
+        let specificBranchCondition: any = undefined;
+        if (filterBranchId && filterBranchId !== "all") {
+            if (filterBranchId === "global") {
+                specificBranchCondition = eq(products.isGlobal, true);
+            } else if (filterBranchId === "unassigned") {
+                specificBranchCondition = and(
+                    eq(products.isGlobal, false),
+                    sql`NOT EXISTS (
+                        SELECT 1 FROM ${productBranches} pb
+                        WHERE pb.product_id = ${products.id}
+                    )`
+                );
+            } else {
+                specificBranchCondition = sql`EXISTS (
+                    SELECT 1 FROM ${productBranches} pb
+                    WHERE pb.product_id = ${products.id} AND pb.branch_id = ${filterBranchId}
+                )`;
+            }
+        }
+
+        const filterAttributeId = query.attributeId as string | undefined;
+        const filterAttributeValue = query.attributeValue as string | undefined;
+        let attributeCondition: any = undefined;
+
+        if (filterAttributeId) {
+            if (filterAttributeValue === "__UNASSIGNED__") {
+                attributeCondition = sql`NOT EXISTS (
+                    SELECT 1 FROM ${productAttributeValues} pav
+                    WHERE pav.product_id = ${products.id}
+                      AND pav.attribute_id = ${filterAttributeId}
+                      AND TRIM(COALESCE(pav.value, '')) != ''
+                )`;
+            } else if (filterAttributeValue && filterAttributeValue !== "ALL") {
+                attributeCondition = sql`EXISTS (
+                    SELECT 1 FROM ${productAttributeValues} pav
+                    WHERE pav.product_id = ${products.id}
+                      AND pav.attribute_id = ${filterAttributeId}
+                      AND pav.value = ${filterAttributeValue}
+                )`;
+            }
+        }
+
         const finalCondition = and(
             searchCondition,
             categoryCondition,
             branchCondition,
+            specificBranchCondition,
+            attributeCondition,
         );
 
         const [productList, [totalCount]] = await Promise.all([
@@ -796,6 +845,33 @@ export const getPaginatedProducts = async (req: Request, res: Response) => {
                     reorderLevel: products.reorderLevel,
                     createdAt: products.createdAt,
                     updatedAt: products.updatedAt,
+                    attributes: sql<any>`(
+                        SELECT COALESCE(
+                            json_agg(
+                                json_build_object(
+                                    'id', pav.id,
+                                    'attributeId', pav.attribute_id,
+                                    'value', pav.value
+                                )
+                            ), '[]'::json
+                        )
+                        FROM ${productAttributeValues} pav
+                        WHERE pav.product_id = ${products.id}
+                    )`,
+                    branches: sql<any>`(
+                        SELECT COALESCE(
+                            json_agg(
+                                json_build_object(
+                                    'id', b.id,
+                                    'name', b.name,
+                                    'code', b.code
+                                )
+                            ), '[]'::json
+                        )
+                        FROM ${productBranches} pb
+                        JOIN ${branches} b ON b.id = pb.branch_id
+                        WHERE pb.product_id = ${products.id}
+                    )`,
                     image: sql<string | null>`(
                         SELECT url FROM ${productImages} 
                         WHERE ${productImages.productId} = ${products.id} 
@@ -953,5 +1029,280 @@ export const getProductCategories = async (req: Request, res: Response) => {
     } catch (err) {
         console.error("GetProductCategories error:", err);
         return res.status(500).json({ message: "Failed to fetch categories" });
+    }
+};
+
+export const getProductAttributeSummary = async (req: Request, res: Response) => {
+    const { attributeId } = req.params;
+    try {
+        const [attr] = await db
+            .select()
+            .from(productAttributes)
+            .where(eq(productAttributes.id, attributeId));
+
+        if (!attr) {
+            return res.status(404).json({ message: "Attribute not found" });
+        }
+
+        const valueCounts = await db
+            .select({
+                value: productAttributeValues.value,
+                count: sql<number>`count(distinct ${productAttributeValues.productId})`,
+            })
+            .from(productAttributeValues)
+            .where(eq(productAttributeValues.attributeId, attributeId))
+            .groupBy(productAttributeValues.value)
+            .orderBy(desc(sql`count(distinct ${productAttributeValues.productId})`));
+
+        const [totalProducts] = await db
+            .select({ count: sql<number>`count(*)` })
+            .from(products)
+            .where(eq(products.isActive, true));
+
+        const assignedCount = valueCounts.reduce((acc, curr) => acc + Number(curr.count), 0);
+        const unassignedCount = Math.max(0, Number(totalProducts?.count || 0) - assignedCount);
+
+        return res.json({
+            attribute: attr,
+            values: valueCounts.map((v) => ({ value: v.value, count: Number(v.count) })),
+            totalProducts: Number(totalProducts?.count || 0),
+            assignedCount,
+            unassignedCount,
+        });
+    } catch (err: any) {
+        console.error("getProductAttributeSummary error:", err);
+        return res.status(500).json({ message: "Failed to fetch attribute summary" });
+    }
+};
+
+export const bulkUpdateProductAttribute = async (req: Request, res: Response) => {
+    const { productIds, attributeId, value } = req.body;
+    if (!Array.isArray(productIds) || !productIds.length || !attributeId) {
+        return res.status(400).json({ message: "productIds and attributeId are required" });
+    }
+
+    try {
+        const trimmedValue = (value ?? "").trim();
+
+        for (const pid of productIds) {
+            const [existing] = await db
+                .select()
+                .from(productAttributeValues)
+                .where(
+                    and(
+                        eq(productAttributeValues.productId, pid),
+                        eq(productAttributeValues.attributeId, attributeId),
+                    ),
+                );
+
+            if (!trimmedValue) {
+                // If value is empty, remove the assignment
+                if (existing) {
+                    await db
+                        .delete(productAttributeValues)
+                        .where(eq(productAttributeValues.id, existing.id));
+                }
+            } else {
+                if (existing) {
+                    await db
+                        .update(productAttributeValues)
+                        .set({ value: trimmedValue })
+                        .where(eq(productAttributeValues.id, existing.id));
+                } else {
+                    await db.insert(productAttributeValues).values({
+                        productId: pid,
+                        attributeId,
+                        value: trimmedValue,
+                    });
+                }
+            }
+        }
+
+        logAction(req, {
+            action: "update",
+            table: "product_attribute_values",
+            userId: req.user!.id,
+            msg: `bulk updated attribute ${attributeId} for ${productIds.length} products to "${trimmedValue}"`,
+        });
+
+        return res.json({
+            message: `Berhasil memperbarui atribut pada ${productIds.length} produk`,
+            count: productIds.length,
+        });
+    } catch (err: any) {
+        console.error("bulkUpdateProductAttribute error:", err);
+        return res.status(500).json({ message: err.message || "Failed to bulk update attribute" });
+    }
+};
+
+export const getProductBranchSummary = async (req: Request, res: Response) => {
+    try {
+        const allBranches = await db
+            .select({
+                id: branches.id,
+                name: branches.name,
+                code: branches.code,
+                isHq: branches.isHq,
+            })
+            .from(branches)
+            .where(eq(branches.isActive, true))
+            .orderBy(asc(branches.code));
+
+        const branchProductCounts = await db
+            .select({
+                branchId: productBranches.branchId,
+                count: sql<number>`count(distinct ${productBranches.productId})`,
+            })
+            .from(productBranches)
+            .innerJoin(products, eq(products.id, productBranches.productId))
+            .where(eq(products.isActive, true))
+            .groupBy(productBranches.branchId);
+
+        const countMap = new Map<string, number>();
+        branchProductCounts.forEach((c) => {
+            countMap.set(c.branchId, Number(c.count));
+        });
+
+        const [totalProducts] = await db
+            .select({ count: sql<number>`count(*)` })
+            .from(products)
+            .where(eq(products.isActive, true));
+
+        const [globalProducts] = await db
+            .select({ count: sql<number>`count(*)` })
+            .from(products)
+            .where(and(eq(products.isActive, true), eq(products.isGlobal, true)));
+
+        const [unassignedProducts] = await db
+            .select({ count: sql<number>`count(*)` })
+            .from(products)
+            .where(
+                and(
+                    eq(products.isActive, true),
+                    eq(products.isGlobal, false),
+                    sql`NOT EXISTS (
+                        SELECT 1 FROM ${productBranches} pb
+                        WHERE pb.product_id = ${products.id}
+                    )`
+                )
+            );
+
+        return res.json({
+            branches: allBranches.map((b) => ({
+                ...b,
+                productCount: countMap.get(b.id) || 0,
+            })),
+            totalProductCount: Number(totalProducts?.count || 0),
+            globalProductCount: Number(globalProducts?.count || 0),
+            unassignedProductCount: Number(unassignedProducts?.count || 0),
+        });
+    } catch (err: any) {
+        console.error("getProductBranchSummary error:", err);
+        return res.status(500).json({ message: "Failed to fetch product branch summary" });
+    }
+};
+
+export const bulkUpdateProductBranches = async (req: Request, res: Response) => {
+    const { action, productIds, targetBranchId, sourceBranchId, isGlobal } = req.body;
+
+    if (!Array.isArray(productIds) || !productIds.length || !action) {
+        return res.status(400).json({ message: "action and productIds are required" });
+    }
+
+    try {
+        if (action === "assign") {
+            if (!targetBranchId) {
+                return res.status(400).json({ message: "targetBranchId is required for assign" });
+            }
+            for (const pid of productIds) {
+                const [existing] = await db
+                    .select()
+                    .from(productBranches)
+                    .where(
+                        and(
+                            eq(productBranches.productId, pid),
+                            eq(productBranches.branchId, targetBranchId),
+                        )
+                    )
+                    .limit(1);
+
+                if (!existing) {
+                    await db.insert(productBranches).values({
+                        productId: pid,
+                        branchId: targetBranchId,
+                    });
+                }
+            }
+        } else if (action === "move") {
+            if (!targetBranchId) {
+                return res.status(400).json({ message: "targetBranchId is required for move" });
+            }
+            for (const pid of productIds) {
+                if (sourceBranchId) {
+                    await db
+                        .delete(productBranches)
+                        .where(
+                            and(
+                                eq(productBranches.productId, pid),
+                                eq(productBranches.branchId, sourceBranchId),
+                            )
+                        );
+                }
+                const [existing] = await db
+                    .select()
+                    .from(productBranches)
+                    .where(
+                        and(
+                            eq(productBranches.productId, pid),
+                            eq(productBranches.branchId, targetBranchId),
+                        )
+                    )
+                    .limit(1);
+
+                if (!existing) {
+                    await db.insert(productBranches).values({
+                        productId: pid,
+                        branchId: targetBranchId,
+                    });
+                }
+            }
+        } else if (action === "remove") {
+            if (!targetBranchId) {
+                return res.status(400).json({ message: "targetBranchId is required for remove" });
+            }
+            for (const pid of productIds) {
+                await db
+                    .delete(productBranches)
+                    .where(
+                        and(
+                            eq(productBranches.productId, pid),
+                            eq(productBranches.branchId, targetBranchId),
+                        )
+                    );
+            }
+        } else if (action === "set_global") {
+            const flag = Boolean(isGlobal);
+            await db
+                .update(products)
+                .set({ isGlobal: flag })
+                .where(inArray(products.id, productIds));
+        } else {
+            return res.status(400).json({ message: `Unknown action: ${action}` });
+        }
+
+        logAction(req, {
+            action: "update",
+            table: "product_branches",
+            userId: req.user!.id,
+            msg: `bulk branch action "${action}" on ${productIds.length} products`,
+        });
+
+        return res.json({
+            message: `Operasi branch berhasil diterapkan ke ${productIds.length} produk`,
+            count: productIds.length,
+        });
+    } catch (err: any) {
+        console.error("bulkUpdateProductBranches error:", err);
+        return res.status(500).json({ message: err.message || "Failed to update product branches" });
     }
 };

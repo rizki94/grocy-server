@@ -123,7 +123,8 @@ export const getEmployees = async (req: Request, res: Response) => {
         const query = req.query;
         const pageIndex = parseInt(query.pageIndex as string) || 0;
         const pageSize = parseInt(query.pageSize as string) || 10;
-        const offset = pageIndex * pageSize;
+        const offset = pageSize === -1 ? 0 : pageIndex * pageSize;
+        const limit = pageSize === -1 ? 10000 : pageSize;
 
         const search = (query.search as string)?.trim() ?? "";
         const branchId = query.branchId as string;
@@ -193,15 +194,21 @@ export const getEmployees = async (req: Request, res: Response) => {
                 .leftJoin(workShifts, eq(employees.defaultShiftId, workShifts.id))
                 .where(whereClause)
                 .orderBy(employees.fullName)
-                .limit(pageSize)
+                .limit(limit)
                 .offset(offset),
             db
-                .select({ count: sql<number>`count(*)` })
+                .select({
+                    count: sql<number>`count(*)`,
+                    active: sql<number>`count(*) filter (where ${employees.isActive} = true)`,
+                    inactive: sql<number>`count(*) filter (where ${employees.isActive} = false)`,
+                })
                 .from(employees)
                 .where(whereClause),
         ]);
 
         const total = Number(totalCount[0]?.count || 0);
+        const activeCount = Number(totalCount[0]?.active || 0);
+        const inactiveCount = Number(totalCount[0]?.inactive || 0);
 
         return res.json({
             rows: employeeList.map((e) => ({
@@ -210,9 +217,14 @@ export const getEmployees = async (req: Request, res: Response) => {
                 dailyAllowance: Number(e.dailyAllowance || 0),
             })),
             rowCount: total,
-            pageCount: Math.ceil(total / pageSize),
+            pageCount: pageSize === -1 ? 1 : Math.ceil(total / pageSize),
             pageIndex,
             pageSize,
+            summary: {
+                totalEmployees: total,
+                activeEmployees: activeCount,
+                inactiveEmployees: inactiveCount,
+            },
         });
     } catch (error) {
         console.error("Error fetching employees:", error);
@@ -1068,7 +1080,8 @@ export const getPayrolls = async (req: Request, res: Response) => {
         const query = req.query;
         const pageIndex = parseInt(query.pageIndex as string) || 0;
         const pageSize = parseInt(query.pageSize as string) || 10;
-        const offset = pageIndex * pageSize;
+        const offset = pageSize === -1 ? 0 : pageIndex * pageSize;
+        const limit = pageSize === -1 ? 10000 : pageSize;
 
         const period = query.period as string;
         const branchId = query.branchId as string;
@@ -1138,16 +1151,23 @@ export const getPayrolls = async (req: Request, res: Response) => {
                 .leftJoin(branches, eq(employees.branchId, branches.id))
                 .where(whereClause)
                 .orderBy(desc(payrolls.createdAt))
-                .limit(pageSize)
+                .limit(limit)
                 .offset(offset),
             db
-                .select({ count: sql<number>`count(*)` })
+                .select({
+                    count: sql<number>`count(*)`,
+                    totalNet: sql<number>`coalesce(sum(${payrolls.netSalary}), 0)`,
+                    totalPaid: sql<number>`count(*) filter (where ${payrolls.status} = 'paid')`,
+                    totalApproved: sql<number>`count(*) filter (where ${payrolls.status} = 'approved')`,
+                    totalDraft: sql<number>`count(*) filter (where ${payrolls.status} = 'draft')`,
+                })
                 .from(payrolls)
                 .innerJoin(employees, eq(payrolls.employeeId, employees.id))
                 .where(whereClause),
         ]);
 
         const total = Number(totalCount[0]?.count || 0);
+        const stats = totalCount[0];
 
         return res.json({
             rows: list.map((p) => ({
@@ -1161,9 +1181,15 @@ export const getPayrolls = async (req: Request, res: Response) => {
                 overtimeHours: Number(p.overtimeHours || 0),
             })),
             rowCount: total,
-            pageCount: Math.ceil(total / pageSize),
+            pageCount: pageSize === -1 ? 1 : Math.ceil(total / pageSize),
             pageIndex,
             pageSize,
+            summary: {
+                totalNet: Number(stats?.totalNet || 0),
+                totalPaid: Number(stats?.totalPaid || 0),
+                totalApproved: Number(stats?.totalApproved || 0),
+                totalDraft: Number(stats?.totalDraft || 0),
+            },
         });
     } catch (error) {
         console.error("Error fetching payrolls:", error);

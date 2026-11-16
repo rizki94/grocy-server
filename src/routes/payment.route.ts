@@ -7,6 +7,7 @@ import {
     postPaymentController,
     updatePaymentController,
     voidPaymentController,
+    deletePaymentController,
 } from "@/controllers/payment.controller";
 import { Router } from "express";
 
@@ -20,5 +21,6 @@ paymentRouter.post("/", createPaymentController);
 paymentRouter.put("/:id", updatePaymentController);
 paymentRouter.put("/post/:id", postPaymentController);
 paymentRouter.post("/:id/cancel", voidPaymentController);
+paymentRouter.delete("/:id", deletePaymentController);
 
 export default paymentRouter;

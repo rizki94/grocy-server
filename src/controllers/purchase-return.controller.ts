@@ -726,3 +726,43 @@ export const cancelPurchaseReturn = async (req: Request, res: Response) => {
         });
     }
 };
+
+export const deletePurchaseReturn = async (req: Request, res: Response) => {
+    const { id } = req.params;
+    try {
+        const [purchaseReturn] = await db
+            .select()
+            .from(transactions)
+            .where(and(eq(transactions.id, id), eq(transactions.type, "purchase_return")));
+
+        if (!purchaseReturn) {
+            return res.status(404).json({ message: "Purchase return not found" });
+        }
+
+        if (purchaseReturn.status === "posted" || purchaseReturn.status === "paid") {
+            return res.status(400).json({
+                message: "Retur pembelian yang sudah dipost tidak dapat dihapus",
+            });
+        }
+
+        await db.delete(transactionDetails).where(eq(transactionDetails.transactionId, id));
+        await db.delete(transactions).where(eq(transactions.id, id));
+
+        logAction(req, {
+            action: "delete",
+            table: "transactions",
+            id: purchaseReturn.invoice,
+            userId: req.user!.id,
+            msg: `deleted purchase return invoice ${purchaseReturn.invoice}`,
+        });
+
+        return res.status(200).json({
+            message: `Retur pembelian ${purchaseReturn.invoice} berhasil dihapus`,
+        });
+    } catch (error: any) {
+        console.error("Delete purchase return error:", error);
+        return res.status(500).json({
+            message: error.message || "Failed to delete purchase return",
+        });
+    }
+};
