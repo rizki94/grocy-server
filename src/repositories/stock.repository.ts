@@ -34,7 +34,11 @@ export async function updateStockForTransaction(
         const allowNegativeStock = globalSettings?.allowNegativeStock || false;
 
         for (const detail of details) {
-            const baseQty = detail.qty * detail.baseRatio;
+            const rawBaseQty = detail.qty * detail.baseRatio;
+            const isIntRatio = Number.isInteger(Number(detail.baseRatio));
+            const baseQty = isIntRatio && Math.abs(rawBaseQty - Math.round(rawBaseQty)) < 0.15
+                ? Math.round(rawBaseQty)
+                : rawBaseQty;
 
             const stockWhere = [
                 eq(stocks.productId, detail.productId),

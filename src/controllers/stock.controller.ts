@@ -54,10 +54,15 @@ export const getMonitoringStock = async (req: Request, res: Response) => {
         query.availableOnly === "true" || query.onlyAvailable === "true";
     const criticalOnly = query.criticalOnly === "true";
 
-    const searchCondition = search
-        ? or(
-              like(sql`LOWER(${products.name})`, `%${search.toLowerCase()}%`),
-              like(sql`LOWER(${warehouses.name})`, `%${search.toLowerCase()}%`),
+    const searchWords = search.toLowerCase().trim().split(/\s+/).filter(Boolean);
+    const searchCondition = searchWords.length > 0
+        ? and(
+              ...searchWords.map((word) =>
+                  or(
+                      like(sql`LOWER(${products.name})`, `%${word}%`),
+                      like(sql`LOWER(${warehouses.name})`, `%${word}%`),
+                  )
+              )
           )
         : undefined;
 
@@ -163,12 +168,15 @@ export const getMonitoringStock = async (req: Request, res: Response) => {
             );
             const baseQty = Number(stock.baseQty);
             const primaryRatio = Number(stock.baseRatio) || 1;
+            const reorderLevel = Number(stock.reorderLevel) || 0;
 
             return {
                 ...stock,
                 qty: baseQty / primaryRatio,
-                reorderLevel: Number(stock.reorderLevel),
+                reorderLevel,
                 decomposed: decomposeQuantity(baseQty, units),
+                reorderDecomposed:
+                    reorderLevel > 0 ? decomposeQuantity(reorderLevel, units) : null,
             };
         });
 
@@ -829,12 +837,19 @@ export const getExpiryStockReport = async (req: Request, res: Response) => {
         }
 
         if (search) {
-            conditions.push(
-                or(
-                    like(sql`LOWER(${products.name})`, `%${search.toLowerCase()}%`),
-                    like(sql`LOWER(${stocks.batchNumber})`, `%${search.toLowerCase()}%`),
-                ),
-            );
+            const searchWords = search.toLowerCase().trim().split(/\s+/).filter(Boolean);
+            if (searchWords.length > 0) {
+                conditions.push(
+                    and(
+                        ...searchWords.map((word) =>
+                            or(
+                                like(sql`LOWER(${products.name})`, `%${word}%`),
+                                like(sql`LOWER(${stocks.batchNumber})`, `%${word}%`),
+                            )
+                        )
+                    )
+                );
+            }
         }
 
         const nowSql = sql`CURRENT_DATE`;

@@ -68,7 +68,7 @@ export const productAttributeValueSchema = z.object({
         .or(z.literal(""))
         .transform((val) => (val === "" ? undefined : val)),
     attributeId: z.string().uuid({ message: "attributeId is required" }),
-    value: z.string().min(1, "value is required"),
+    value: z.string().optional().nullable().default(""),
 });
 
 export const productImageSchema = z.object({

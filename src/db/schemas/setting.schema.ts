@@ -15,6 +15,8 @@ export const settings = pgTable("settings", {
     maxDateOffset: integer("max_date_offset").default(30).notNull(),      // days relative to today (positive = future)
     lockSalesPrice: boolean("lock_sales_price").default(false).notNull(), // prevent manual price edits in sales
     enableTax: boolean("enable_tax").default(true).notNull(),             // global tax toggle
+    requireProductFormulaName: boolean("require_product_formula_name").default(false).notNull(), // enforce product naming from formula
+    productNamingFormula: text("product_naming_formula").default("").notNull(), // centralized product naming formula pattern
     companyName: text("company_name"),
     companyNpwp: text("company_npwp"),
     companyNitku: text("company_nitku"),

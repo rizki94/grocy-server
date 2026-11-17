@@ -99,15 +99,20 @@ export async function getActiveProducts(req: Request, res: Response) {
                 )`,
             })
             .from(products)
-            .innerJoin(productDetails, eq(productDetails.productId, products.id))
+            .innerJoin(
+                productDetails,
+                eq(productDetails.productId, products.id),
+            )
             .leftJoin(productUnits, eq(productUnits.id, productDetails.unitId))
             .leftJoin(taxes, eq(taxes.id, products.taxId))
             .where(
                 and(
                     eq(products.isActive, true),
-                    isSellableOnly ? eq(productDetails.isSellable, true) : undefined,
+                    isSellableOnly
+                        ? eq(productDetails.isSellable, true)
+                        : undefined,
                     productBranchFilter(products, req),
-                )
+                ),
             )
             .orderBy(products.name);
 
@@ -115,25 +120,41 @@ export async function getActiveProducts(req: Request, res: Response) {
             .map((d) => d.productDetailId)
             .filter(Boolean) as string[];
 
-        const prices = productDetailIds.length > 0
-            ? await db
-                .select()
-                .from(productDetailPrices)
-                .where(inArray(productDetailPrices.productDetailId, productDetailIds))
-            : [];
+        const prices =
+            productDetailIds.length > 0
+                ? await db
+                      .select()
+                      .from(productDetailPrices)
+                      .where(
+                          inArray(
+                              productDetailPrices.productDetailId,
+                              productDetailIds,
+                          ),
+                      )
+                : [];
 
-        const tierPrices = productDetailIds.length > 0
-            ? await db
-                .select()
-                .from(productTierPrices)
-                .where(inArray(productTierPrices.productDetailId, productDetailIds))
-                .orderBy(asc(productTierPrices.minQty))
-            : [];
+        const tierPrices =
+            productDetailIds.length > 0
+                ? await db
+                      .select()
+                      .from(productTierPrices)
+                      .where(
+                          inArray(
+                              productTierPrices.productDetailId,
+                              productDetailIds,
+                          ),
+                      )
+                      .orderBy(asc(productTierPrices.minQty))
+                : [];
 
-        const dataWithPrices = data.map(d => ({
+        const dataWithPrices = data.map((d) => ({
             ...d,
-            prices: prices.filter(p => p.productDetailId === d.productDetailId),
-            tierPrices: tierPrices.filter(tp => tp.productDetailId === d.productDetailId),
+            prices: prices.filter(
+                (p) => p.productDetailId === d.productDetailId,
+            ),
+            tierPrices: tierPrices.filter(
+                (tp) => tp.productDetailId === d.productDetailId,
+            ),
         }));
 
         res.status(200).json(dataWithPrices);
@@ -173,10 +194,10 @@ export const getProductById = async (req: Request, res: Response) => {
             .where(
                 details.length > 0
                     ? inArray(
-                        productDetailPrices.productDetailId,
-                        details.map((d) => d.id),
-                    )
-                    : sql`1 = 0`
+                          productDetailPrices.productDetailId,
+                          details.map((d) => d.id),
+                      )
+                    : sql`1 = 0`,
             );
 
         const tierPrices = await db
@@ -185,10 +206,10 @@ export const getProductById = async (req: Request, res: Response) => {
             .where(
                 details.length > 0
                     ? inArray(
-                        productTierPrices.productDetailId,
-                        details.map((d) => d.id),
-                    )
-                    : sql`1 = 0`
+                          productTierPrices.productDetailId,
+                          details.map((d) => d.id),
+                      )
+                    : sql`1 = 0`,
             )
             .orderBy(asc(productTierPrices.minQty));
 
@@ -215,12 +236,7 @@ export const getProductById = async (req: Request, res: Response) => {
             .select({ totalQty: sql<number>`COALESCE(SUM(${stocks.qty}), 0)` })
             .from(stocks)
             .leftJoin(warehouses, eq(warehouses.id, stocks.warehouseId))
-            .where(
-                and(
-                    eq(stocks.productId, id),
-                    branchCondition,
-                ),
-            )
+            .where(and(eq(stocks.productId, id), branchCondition))
             .then((r) => r[0]);
 
         // FIFO avg cost = weighted average from stock layers
@@ -234,12 +250,7 @@ export const getProductById = async (req: Request, res: Response) => {
             .from(stockLayers)
             .innerJoin(stocks, eq(stockLayers.stockId, stocks.id))
             .leftJoin(warehouses, eq(warehouses.id, stocks.warehouseId))
-            .where(
-                and(
-                    eq(stocks.productId, id),
-                    branchCondition,
-                ),
-            )
+            .where(and(eq(stocks.productId, id), branchCondition))
             .then((r) => r[0]);
 
         const assignedBranches = await db
@@ -298,12 +309,12 @@ export const getProductByBarcode = async (req: Request, res: Response) => {
                     eq(productDetails.isSellable, true),
                     or(
                         eq(productDetails.barcode, barcode),
-                        eq(productDetails.skuId, barcode)
-                    )
-                )
+                        eq(productDetails.skuId, barcode),
+                    ),
+                ),
             )
             .limit(1)
-            .then(r => r[0]);
+            .then((r) => r[0]);
 
         if (!detail) {
             return res.status(404).json({ message: "Product not found" });
@@ -354,7 +365,7 @@ export const createProduct = async (req: Request, res: Response) => {
                 product.branchIds.map((bId) => ({
                     productId: createdProduct.id,
                     branchId: bId,
-                }))
+                })),
             );
         }
 
@@ -404,13 +415,21 @@ export const createProduct = async (req: Request, res: Response) => {
         }
 
         if (product.attributes?.length) {
-            await db.insert(productAttributeValues).values(
-                product.attributes.map((a) => ({
-                    productId: createdProduct.id,
-                    attributeId: a.attributeId,
-                    value: a.value,
-                })),
+            const validAttrs = product.attributes.filter(
+                (a) =>
+                    a.value !== undefined &&
+                    a.value !== null &&
+                    String(a.value).trim() !== "",
             );
+            if (validAttrs.length) {
+                await db.insert(productAttributeValues).values(
+                    validAttrs.map((a) => ({
+                        productId: createdProduct.id,
+                        attributeId: a.attributeId,
+                        value: String(a.value).trim(),
+                    })),
+                );
+            }
         }
 
         if (product.images?.length) {
@@ -428,7 +447,12 @@ export const createProduct = async (req: Request, res: Response) => {
         logAction(req, {
             action: "insert",
             table: "products",
-            data: { ...createdProduct, details: product.details, attributes: product.attributes, images: product.images },
+            data: {
+                ...createdProduct,
+                details: product.details,
+                attributes: product.attributes,
+                images: product.images,
+            },
             userId: req.user!.id,
             msg: `created product "${createdProduct.name}"`,
         });
@@ -469,7 +493,8 @@ export const updateProduct = async (req: Request, res: Response) => {
 
         if (existing.isGlobal && !req.isHq) {
             return res.status(403).json({
-                message: "Global products can only be edited by HQ Branch users",
+                message:
+                    "Global products can only be edited by HQ Branch users",
             });
         }
 
@@ -491,13 +516,15 @@ export const updateProduct = async (req: Request, res: Response) => {
             .returning();
 
         // Sync branch assignments
-        await db.delete(productBranches).where(eq(productBranches.productId, product.id));
+        await db
+            .delete(productBranches)
+            .where(eq(productBranches.productId, product.id));
         if (!product.isGlobal && product.branchIds?.length) {
             await db.insert(productBranches).values(
                 product.branchIds.map((bId) => ({
                     productId: product.id,
                     branchId: bId,
-                }))
+                })),
             );
         }
 
@@ -584,27 +611,32 @@ export const updateProduct = async (req: Request, res: Response) => {
 
                 // delete removed prices
                 const pricesToDelete = existingPrices.filter(
-                    (ep) => !newPrices.some((np) => np.priceGroupId === ep.priceGroupId)
+                    (ep) =>
+                        !newPrices.some(
+                            (np) => np.priceGroupId === ep.priceGroupId,
+                        ),
                 );
                 if (pricesToDelete.length) {
                     await db.delete(productDetailPrices).where(
                         inArray(
                             productDetailPrices.id,
-                            pricesToDelete.map((p) => p.id)
-                        )
+                            pricesToDelete.map((p) => p.id),
+                        ),
                     );
                 }
 
                 // upsert prices
                 for (const p of newPrices) {
                     const existingPrice = existingPrices.find(
-                        (ep) => ep.priceGroupId === p.priceGroupId
+                        (ep) => ep.priceGroupId === p.priceGroupId,
                     );
                     if (existingPrice) {
                         await db
                             .update(productDetailPrices)
                             .set({ price: p.price })
-                            .where(eq(productDetailPrices.id, existingPrice.id));
+                            .where(
+                                eq(productDetailPrices.id, existingPrice.id),
+                            );
                     } else {
                         await db.insert(productDetailPrices).values({
                             productDetailId: detailId,
@@ -640,9 +672,15 @@ export const updateProduct = async (req: Request, res: Response) => {
             .from(productAttributeValues)
             .where(eq(productAttributeValues.productId, product.id));
 
-        const newAttrs = product.attributes ?? [];
+        const validNewAttrs = (product.attributes ?? []).filter(
+            (na) =>
+                na.value !== undefined &&
+                na.value !== null &&
+                String(na.value).trim() !== "",
+        );
         const attrsToDelete = existingAttrs.filter(
-            (ea) => !newAttrs.some((na) => na.attributeId === ea.attributeId),
+            (ea) =>
+                !validNewAttrs.some((na) => na.attributeId === ea.attributeId),
         );
 
         if (attrsToDelete.length) {
@@ -654,20 +692,20 @@ export const updateProduct = async (req: Request, res: Response) => {
             );
         }
 
-        for (const a of newAttrs) {
+        for (const a of validNewAttrs) {
             const existing = existingAttrs.find(
                 (ea) => ea.attributeId === a.attributeId,
             );
             if (existing) {
                 await db
                     .update(productAttributeValues)
-                    .set({ value: a.value })
+                    .set({ value: String(a.value).trim() })
                     .where(eq(productAttributeValues.id, existing.id));
             } else {
                 await db.insert(productAttributeValues).values({
                     productId: product.id,
                     attributeId: a.attributeId,
-                    value: a.value,
+                    value: String(a.value).trim(),
                 });
             }
         }
@@ -745,14 +783,27 @@ export const getPaginatedProducts = async (req: Request, res: Response) => {
         const search = (query.search as string) ?? "";
         const category = query.category as string | undefined;
 
-        const searchCondition = search
-            ? or(
-                like(
-                    sql`LOWER(${products.name})`,
-                    `%${search.toLowerCase()}%`,
-                ),
-            )
-            : undefined;
+        const searchWords = search
+            .toLowerCase()
+            .trim()
+            .split(/\s+/)
+            .filter(Boolean);
+
+        const searchCondition =
+            searchWords.length > 0
+                ? and(
+                      ...searchWords.map((word) =>
+                          or(
+                              like(sql`LOWER(${products.name})`, `%${word}%`),
+                              sql`EXISTS (
+                                  SELECT 1 FROM ${productDetails} pd
+                                  WHERE pd.product_id = ${products.id}
+                                    AND (LOWER(pd.sku_id) LIKE ${`%${word}%`} OR LOWER(pd.barcode) LIKE ${`%${word}%`})
+                              )`,
+                          ),
+                      ),
+                  )
+                : undefined;
 
         const categoryCondition =
             category && category !== "all"
@@ -777,7 +828,10 @@ export const getPaginatedProducts = async (req: Request, res: Response) => {
 
         const branchCondition = productBranchFilter(products, req);
 
-        const filterBranchId = (query.filterBranchId as string) || (query.branchId as string) || undefined;
+        const filterBranchId =
+            (query.filterBranchId as string) ||
+            (query.branchId as string) ||
+            undefined;
         let specificBranchCondition: any = undefined;
         if (filterBranchId && filterBranchId !== "all") {
             if (filterBranchId === "global") {
@@ -788,7 +842,7 @@ export const getPaginatedProducts = async (req: Request, res: Response) => {
                     sql`NOT EXISTS (
                         SELECT 1 FROM ${productBranches} pb
                         WHERE pb.product_id = ${products.id}
-                    )`
+                    )`,
                 );
             } else {
                 specificBranchCondition = sql`EXISTS (
@@ -947,7 +1001,8 @@ export const quickUpdatePrice = async (req: Request, res: Response) => {
 
         if (product.isGlobal && !req.isHq) {
             return res.status(403).json({
-                message: "Global products can only be edited by HQ Branch users",
+                message:
+                    "Global products can only be edited by HQ Branch users",
             });
         }
 
@@ -959,7 +1014,10 @@ export const quickUpdatePrice = async (req: Request, res: Response) => {
                 .from(productDetailPrices)
                 .where(
                     and(
-                        eq(productDetailPrices.productDetailId, item.productDetailId),
+                        eq(
+                            productDetailPrices.productDetailId,
+                            item.productDetailId,
+                        ),
                         eq(productDetailPrices.priceGroupId, item.priceGroupId),
                     ),
                 )
@@ -1032,7 +1090,10 @@ export const getProductCategories = async (req: Request, res: Response) => {
     }
 };
 
-export const getProductAttributeSummary = async (req: Request, res: Response) => {
+export const getProductAttributeSummary = async (
+    req: Request,
+    res: Response,
+) => {
     const { attributeId } = req.params;
     try {
         const [attr] = await db
@@ -1052,33 +1113,51 @@ export const getProductAttributeSummary = async (req: Request, res: Response) =>
             .from(productAttributeValues)
             .where(eq(productAttributeValues.attributeId, attributeId))
             .groupBy(productAttributeValues.value)
-            .orderBy(desc(sql`count(distinct ${productAttributeValues.productId})`));
+            .orderBy(
+                desc(sql`count(distinct ${productAttributeValues.productId})`),
+            );
 
         const [totalProducts] = await db
             .select({ count: sql<number>`count(*)` })
             .from(products)
             .where(eq(products.isActive, true));
 
-        const assignedCount = valueCounts.reduce((acc, curr) => acc + Number(curr.count), 0);
-        const unassignedCount = Math.max(0, Number(totalProducts?.count || 0) - assignedCount);
+        const assignedCount = valueCounts.reduce(
+            (acc, curr) => acc + Number(curr.count),
+            0,
+        );
+        const unassignedCount = Math.max(
+            0,
+            Number(totalProducts?.count || 0) - assignedCount,
+        );
 
         return res.json({
             attribute: attr,
-            values: valueCounts.map((v) => ({ value: v.value, count: Number(v.count) })),
+            values: valueCounts.map((v) => ({
+                value: v.value,
+                count: Number(v.count),
+            })),
             totalProducts: Number(totalProducts?.count || 0),
             assignedCount,
             unassignedCount,
         });
     } catch (err: any) {
         console.error("getProductAttributeSummary error:", err);
-        return res.status(500).json({ message: "Failed to fetch attribute summary" });
+        return res
+            .status(500)
+            .json({ message: "Failed to fetch attribute summary" });
     }
 };
 
-export const bulkUpdateProductAttribute = async (req: Request, res: Response) => {
+export const bulkUpdateProductAttribute = async (
+    req: Request,
+    res: Response,
+) => {
     const { productIds, attributeId, value } = req.body;
     if (!Array.isArray(productIds) || !productIds.length || !attributeId) {
-        return res.status(400).json({ message: "productIds and attributeId are required" });
+        return res
+            .status(400)
+            .json({ message: "productIds and attributeId are required" });
     }
 
     try {
@@ -1131,7 +1210,11 @@ export const bulkUpdateProductAttribute = async (req: Request, res: Response) =>
         });
     } catch (err: any) {
         console.error("bulkUpdateProductAttribute error:", err);
-        return res.status(500).json({ message: err.message || "Failed to bulk update attribute" });
+        return res
+            .status(500)
+            .json({
+                message: err.message || "Failed to bulk update attribute",
+            });
     }
 };
 
@@ -1171,7 +1254,9 @@ export const getProductBranchSummary = async (req: Request, res: Response) => {
         const [globalProducts] = await db
             .select({ count: sql<number>`count(*)` })
             .from(products)
-            .where(and(eq(products.isActive, true), eq(products.isGlobal, true)));
+            .where(
+                and(eq(products.isActive, true), eq(products.isGlobal, true)),
+            );
 
         const [unassignedProducts] = await db
             .select({ count: sql<number>`count(*)` })
@@ -1183,8 +1268,8 @@ export const getProductBranchSummary = async (req: Request, res: Response) => {
                     sql`NOT EXISTS (
                         SELECT 1 FROM ${productBranches} pb
                         WHERE pb.product_id = ${products.id}
-                    )`
-                )
+                    )`,
+                ),
             );
 
         return res.json({
@@ -1198,21 +1283,31 @@ export const getProductBranchSummary = async (req: Request, res: Response) => {
         });
     } catch (err: any) {
         console.error("getProductBranchSummary error:", err);
-        return res.status(500).json({ message: "Failed to fetch product branch summary" });
+        return res
+            .status(500)
+            .json({ message: "Failed to fetch product branch summary" });
     }
 };
 
-export const bulkUpdateProductBranches = async (req: Request, res: Response) => {
-    const { action, productIds, targetBranchId, sourceBranchId, isGlobal } = req.body;
+export const bulkUpdateProductBranches = async (
+    req: Request,
+    res: Response,
+) => {
+    const { action, productIds, targetBranchId, sourceBranchId, isGlobal } =
+        req.body;
 
     if (!Array.isArray(productIds) || !productIds.length || !action) {
-        return res.status(400).json({ message: "action and productIds are required" });
+        return res
+            .status(400)
+            .json({ message: "action and productIds are required" });
     }
 
     try {
         if (action === "assign") {
             if (!targetBranchId) {
-                return res.status(400).json({ message: "targetBranchId is required for assign" });
+                return res
+                    .status(400)
+                    .json({ message: "targetBranchId is required for assign" });
             }
             for (const pid of productIds) {
                 const [existing] = await db
@@ -1222,7 +1317,7 @@ export const bulkUpdateProductBranches = async (req: Request, res: Response) => 
                         and(
                             eq(productBranches.productId, pid),
                             eq(productBranches.branchId, targetBranchId),
-                        )
+                        ),
                     )
                     .limit(1);
 
@@ -1235,7 +1330,9 @@ export const bulkUpdateProductBranches = async (req: Request, res: Response) => 
             }
         } else if (action === "move") {
             if (!targetBranchId) {
-                return res.status(400).json({ message: "targetBranchId is required for move" });
+                return res
+                    .status(400)
+                    .json({ message: "targetBranchId is required for move" });
             }
             for (const pid of productIds) {
                 if (sourceBranchId) {
@@ -1245,7 +1342,7 @@ export const bulkUpdateProductBranches = async (req: Request, res: Response) => 
                             and(
                                 eq(productBranches.productId, pid),
                                 eq(productBranches.branchId, sourceBranchId),
-                            )
+                            ),
                         );
                 }
                 const [existing] = await db
@@ -1255,7 +1352,7 @@ export const bulkUpdateProductBranches = async (req: Request, res: Response) => 
                         and(
                             eq(productBranches.productId, pid),
                             eq(productBranches.branchId, targetBranchId),
-                        )
+                        ),
                     )
                     .limit(1);
 
@@ -1268,7 +1365,9 @@ export const bulkUpdateProductBranches = async (req: Request, res: Response) => 
             }
         } else if (action === "remove") {
             if (!targetBranchId) {
-                return res.status(400).json({ message: "targetBranchId is required for remove" });
+                return res
+                    .status(400)
+                    .json({ message: "targetBranchId is required for remove" });
             }
             for (const pid of productIds) {
                 await db
@@ -1277,7 +1376,7 @@ export const bulkUpdateProductBranches = async (req: Request, res: Response) => 
                         and(
                             eq(productBranches.productId, pid),
                             eq(productBranches.branchId, targetBranchId),
-                        )
+                        ),
                     );
             }
         } else if (action === "set_global") {
@@ -1287,7 +1386,9 @@ export const bulkUpdateProductBranches = async (req: Request, res: Response) => 
                 .set({ isGlobal: flag })
                 .where(inArray(products.id, productIds));
         } else {
-            return res.status(400).json({ message: `Unknown action: ${action}` });
+            return res
+                .status(400)
+                .json({ message: `Unknown action: ${action}` });
         }
 
         logAction(req, {
@@ -1303,6 +1404,10 @@ export const bulkUpdateProductBranches = async (req: Request, res: Response) => 
         });
     } catch (err: any) {
         console.error("bulkUpdateProductBranches error:", err);
-        return res.status(500).json({ message: err.message || "Failed to update product branches" });
+        return res
+            .status(500)
+            .json({
+                message: err.message || "Failed to update product branches",
+            });
     }
 };

@@ -10,8 +10,44 @@ import {
     productAttributeValues,
     productAttributes,
 } from "@/db/schemas";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { Request, Response } from "express";
+
+function decomposeUnits(
+    baseQty: number,
+    productUnitsList: { baseRatio: number | string; unitName: string; unitAbbr?: string | null }[],
+): string | null {
+    if (!productUnitsList || productUnitsList.length <= 1 || baseQty <= 0) return null;
+    const isIntegerRatios = productUnitsList.every((r) =>
+        Number.isInteger(Number(r.baseRatio)),
+    );
+    let remaining =
+        isIntegerRatios && Math.abs(baseQty - Math.round(baseQty)) < 0.15
+            ? Math.round(baseQty)
+            : baseQty;
+
+    const parts: string[] = [];
+    for (const u of productUnitsList) {
+        const ratio = Number(u.baseRatio || 1);
+        if (ratio <= 1) continue;
+        const count = Math.floor(remaining / ratio);
+        if (count > 0) {
+            parts.push(`${count} ${u.unitAbbr || u.unitName}`);
+            remaining = Math.round((remaining % ratio) * 10000) / 10000;
+        }
+    }
+    const baseUnit = productUnitsList.find((u) => Number(u.baseRatio) === 1);
+    if (remaining > 0 && baseUnit) {
+        const cleanCount =
+            isIntegerRatios && Math.abs(remaining - Math.round(remaining)) < 0.15
+                ? Math.round(remaining)
+                : remaining;
+        if (cleanCount > 0) {
+            parts.push(`${cleanCount} ${baseUnit.unitAbbr || baseUnit.unitName}`);
+        }
+    }
+    return parts.length > 0 ? parts.join(" ") : null;
+}
 
 /**
  * GET /picking-list/invoices?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
@@ -110,6 +146,7 @@ export const processPickingList = async (req: Request, res: Response) => {
                 warehouseId: transactionDetails.warehouseId,
                 warehouseName: warehouses.name,
                 qty: transactionDetails.qty,
+                baseRatio: productDetails.baseRatio,
             })
             .from(transactionDetails)
             .innerJoin(products, eq(transactionDetails.productId, products.id))
@@ -152,6 +189,22 @@ export const processPickingList = async (req: Request, res: Response) => {
             }
         }
 
+        const productIdsAll = [...new Set(lines.map((l) => l.productId))];
+        let allUnitsBatch: any[] = [];
+        if (productIdsAll.length > 0) {
+            allUnitsBatch = await db
+                .select({
+                    productId: productDetails.productId,
+                    baseRatio: productDetails.baseRatio,
+                    unitName: productUnits.name,
+                    unitAbbr: productUnits.abbreviation,
+                })
+                .from(productDetails)
+                .innerJoin(productUnits, eq(productDetails.unitId, productUnits.id))
+                .where(inArray(productDetails.productId, productIdsAll))
+                .orderBy(desc(productDetails.baseRatio));
+        }
+
         // Build consolidated items: group by (groupKey, productDetailId)
         type ConsolidatedItem = {
             groupKey: string;
@@ -162,7 +215,9 @@ export const processPickingList = async (req: Request, res: Response) => {
             unitName: string;
             unitAbbr: string;
             warehouseName: string | null;
+            baseRatio: number;
             totalQty: number;
+            decomposedQty?: string | null;
             invoices: string[];
         };
 
@@ -195,7 +250,9 @@ export const processPickingList = async (req: Request, res: Response) => {
                     unitName: line.unitName,
                     unitAbbr: line.unitAbbr,
                     warehouseName: line.warehouseName,
+                    baseRatio: Number(line.baseRatio || 1),
                     totalQty: 0,
+                    decomposedQty: null,
                     invoices: [],
                 };
             }
@@ -204,6 +261,12 @@ export const processPickingList = async (req: Request, res: Response) => {
             if (invoice && !consolidated[key].invoices.includes(invoice)) {
                 consolidated[key].invoices.push(invoice);
             }
+        }
+
+        for (const item of Object.values(consolidated)) {
+            const unitsForP = allUnitsBatch.filter((u) => u.productId === item.productId);
+            const baseQty = item.totalQty * item.baseRatio;
+            item.decomposedQty = decomposeUnits(baseQty, unitsForP);
         }
 
         // Sort and group output
@@ -263,9 +326,11 @@ export const getPickingList = async (req: Request, res: Response) => {
 
         const details = await db
             .select({
+                productId: products.id,
                 productName: products.name,
                 warehouseName: warehouses.name,
                 qty: transactionDetails.qty,
+                baseRatio: productDetails.baseRatio,
                 sku: productDetails.skuId,
                 barcode: productDetails.barcode,
                 unitName: productUnits.name,
@@ -285,7 +350,32 @@ export const getPickingList = async (req: Request, res: Response) => {
             .where(eq(transactionDetails.transactionId, id))
             .orderBy(warehouses.name, products.name);
 
-        res.json({ transaction, details });
+        const prodIds = [...new Set(details.map((d) => d.productId))];
+        let allUnitsSingle: any[] = [];
+        if (prodIds.length > 0) {
+            allUnitsSingle = await db
+                .select({
+                    productId: productDetails.productId,
+                    baseRatio: productDetails.baseRatio,
+                    unitName: productUnits.name,
+                    unitAbbr: productUnits.abbreviation,
+                })
+                .from(productDetails)
+                .innerJoin(productUnits, eq(productDetails.unitId, productUnits.id))
+                .where(inArray(productDetails.productId, prodIds))
+                .orderBy(desc(productDetails.baseRatio));
+        }
+
+        const detailsWithDecomposed = details.map((d) => {
+            const unitsForP = allUnitsSingle.filter((u) => u.productId === d.productId);
+            const baseQty = Number(d.qty) * Number(d.baseRatio || 1);
+            return {
+                ...d,
+                decomposedQty: decomposeUnits(baseQty, unitsForP),
+            };
+        });
+
+        res.json({ transaction, details: detailsWithDecomposed });
     } catch (error) {
         console.error("Error fetching picking list:", error);
         res.status(500).json({ message: "Failed to fetch picking list" });

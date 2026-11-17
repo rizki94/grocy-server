@@ -13,6 +13,7 @@ import {
 import { and, eq, gte, sql, desc, inArray, lt, ne } from "drizzle-orm";
 import { Request, Response } from "express";
 import { branchScope, productBranchFilter } from "@/helpers/branch.helper";
+import { decomposeQuantity } from "@/helpers/quantity.helper";
 
 export const getDashboardStats = async (req: Request, res: Response) => {
     try {
@@ -282,6 +283,24 @@ export const getDashboardStats = async (req: Request, res: Response) => {
                 ? ((Number(salesThisMonth.total) - Number(salesLastMonth.total)) / Number(salesLastMonth.total)) * 100
                 : 0;
 
+        const lowStockProductIds = lowStockItems.map((item) => item.productId);
+        const lowStockUnits =
+            lowStockProductIds.length > 0
+                ? await db
+                      .select({
+                          productId: productDetails.productId,
+                          unitName: productUnits.name,
+                          baseRatio: productDetails.baseRatio,
+                      })
+                      .from(productDetails)
+                      .innerJoin(
+                          productUnits,
+                          eq(productUnits.id, productDetails.unitId),
+                      )
+                      .where(inArray(productDetails.productId, lowStockProductIds))
+                      .orderBy(desc(productDetails.baseRatio))
+                : [];
+
         res.json({
             sales: {
                 today: {
@@ -329,12 +348,22 @@ export const getDashboardStats = async (req: Request, res: Response) => {
                 marketplace: { total: marketplaceTotal, count: marketplaceCount },
                 directSales: { total: directSalesTotal, count: directSalesCount },
             },
-            lowStockItems: lowStockItems.map((item) => ({
-                productId: item.productId,
-                name: item.name,
-                qty: Number(item.qty || 0),
-                reorderLevel: Number(item.reorderLevel || 0),
-            })),
+            lowStockItems: lowStockItems.map((item) => {
+                const units = lowStockUnits.filter((u) => u.productId === item.productId);
+                const qty = Number(item.qty || 0);
+                const reorder = Number(item.reorderLevel || 0);
+                return {
+                    productId: item.productId,
+                    name: item.name,
+                    qty,
+                    reorderLevel: reorder,
+                    decomposed: units.length > 0 ? decomposeQuantity(qty, units) : null,
+                    reorderDecomposed:
+                        reorder > 0 && units.length > 0
+                            ? decomposeQuantity(reorder, units)
+                            : null,
+                };
+            }),
             recentTransactions: recentTransactions.map((t) => ({
                 ...t,
                 totalAmount: Number(t.totalAmount || 0),
