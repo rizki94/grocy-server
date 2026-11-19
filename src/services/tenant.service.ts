@@ -284,6 +284,7 @@ function getCandidateTokenPaths(): string[] {
     const list: (string | undefined)[] = [
         process.env.MONITOR_TOKENS_PATH,
         process.env.GROCY_MONITOR_TOKENS_PATH,
+        "C:/Users/admin/Documents/grocy-monitor/data/tokens.json",
         path.resolve(process.cwd(), "../grocy-monitor/data/tokens.json"),
         path.resolve(__dirname, "../../../grocy-monitor/data/tokens.json"),
         "d:/Development/grocy-monitor/data/tokens.json",
