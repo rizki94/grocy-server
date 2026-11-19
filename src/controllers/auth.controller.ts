@@ -1,7 +1,8 @@
 import { db } from "@/db";
 import { permissions } from "@/db/schemas/permission.schema";
 import { rolePermissions } from "@/db/schemas/role-permission.schema";
-import { sessions, users } from "@/db/schemas";
+import { sessions, users, roles } from "@/db/schemas";
+import { ALL_PERMISSION_CODES } from "@/constants/permissions.constant";
 import { logAction } from "@/utils/log-helper";
 import { UserModel } from "@/validators/user.validator";
 import {
@@ -219,21 +220,44 @@ export const loginNative = async (
             );
 
             // Fetch permissions for the response
-            const rows = await db
-                .select({
-                    code: permissions.code,
-                    hasPermission: rolePermissions.hasPermission,
-                })
-                .from(rolePermissions)
-                .innerJoin(
-                    permissions,
-                    eq(rolePermissions.permissionId, permissions.id)
-                )
-                .where(eq(rolePermissions.roleId, user.roleId));
+            let roleName = "user";
+            let isSuperAdmin = false;
+            if (user.roleId) {
+                const [r] = await db
+                    .select()
+                    .from(roles)
+                    .where(eq(roles.id, user.roleId))
+                    .limit(1);
+                if (r) {
+                    roleName = r.name;
+                    isSuperAdmin = r.name === "super_admin";
+                }
+            }
 
-            const allowedPermissions = rows
-                .filter((row) => row.hasPermission)
-                .map((row) => row.code);
+            let allowedPermissions: string[] = [];
+            if (isSuperAdmin) {
+                const allPerms = await db
+                    .select({ code: permissions.code })
+                    .from(permissions);
+                const dbCodes = allPerms.map((p) => p.code);
+                allowedPermissions = Array.from(new Set([...dbCodes, ...ALL_PERMISSION_CODES]));
+            } else {
+                const rows = await db
+                    .select({
+                        code: permissions.code,
+                        hasPermission: rolePermissions.hasPermission,
+                    })
+                    .from(rolePermissions)
+                    .innerJoin(
+                        permissions,
+                        eq(rolePermissions.permissionId, permissions.id)
+                    )
+                    .where(eq(rolePermissions.roleId, user.roleId));
+
+                allowedPermissions = rows
+                    .filter((row) => row.hasPermission)
+                    .map((row) => row.code);
+            }
 
             return res.status(200).json({
                 status: 200,
@@ -243,6 +267,8 @@ export const loginNative = async (
                     id: user.id,
                     username: user.username,
                     roleId: user.roleId,
+                    role: roleName,
+                    isSuperAdmin,
                 },
                 permission: allowedPermissions,
             });
@@ -268,21 +294,44 @@ export const refresh = async (req: Request, res: Response) => {
         }
 
         // Fetch permissions
-        const rows = await db
-            .select({
-                code: permissions.code,
-                hasPermission: rolePermissions.hasPermission,
-            })
-            .from(rolePermissions)
-            .innerJoin(
-                permissions,
-                eq(rolePermissions.permissionId, permissions.id)
-            )
-            .where(eq(rolePermissions.roleId, user.roleId));
+        let roleName = "user";
+        let isSuperAdmin = false;
+        if (user.roleId) {
+            const [r] = await db
+                .select()
+                .from(roles)
+                .where(eq(roles.id, user.roleId))
+                .limit(1);
+            if (r) {
+                roleName = r.name;
+                isSuperAdmin = r.name === "super_admin";
+            }
+        }
 
-        const allowedPermissions = rows
-            .filter((row) => row.hasPermission)
-            .map((row) => row.code);
+        let allowedPermissions: string[] = [];
+        if (isSuperAdmin) {
+            const allPerms = await db
+                .select({ code: permissions.code })
+                .from(permissions);
+            const dbCodes = allPerms.map((p) => p.code);
+            allowedPermissions = Array.from(new Set([...dbCodes, ...ALL_PERMISSION_CODES]));
+        } else {
+            const rows = await db
+                .select({
+                    code: permissions.code,
+                    hasPermission: rolePermissions.hasPermission,
+                })
+                .from(rolePermissions)
+                .innerJoin(
+                    permissions,
+                    eq(rolePermissions.permissionId, permissions.id)
+                )
+                .where(eq(rolePermissions.roleId, user.roleId));
+
+            allowedPermissions = rows
+                .filter((row) => row.hasPermission)
+                .map((row) => row.code);
+        }
 
         // Generate new token if needed, or just return user info
         // Client expects { status: 200, user: ..., token: ..., permission: ... }
@@ -291,6 +340,8 @@ export const refresh = async (req: Request, res: Response) => {
                 id: user.id,
                 username: user.username,
                 roleId: user.roleId,
+                role: roleName,
+                isSuperAdmin,
                 isActive: user.isActive,
             },
             process.env.JWT_SECRET || "secret",
@@ -305,6 +356,8 @@ export const refresh = async (req: Request, res: Response) => {
                 id: user.id,
                 username: user.username,
                 roleId: user.roleId,
+                role: roleName,
+                isSuperAdmin,
             },
             permission: allowedPermissions,
         });

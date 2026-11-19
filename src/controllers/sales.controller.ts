@@ -434,7 +434,7 @@ export const postSales = async (req: Request, res: Response) => {
 
             const journalBranchId = await resolveBranchId(sales.branchId, req);
             const journalBranchCode = await resolveBranchCodeFromId(journalBranchId);
-            const journalInvoice = await generateJournalInvoice("sales", journalBranchCode);
+            const journalInvoice = await generateJournalInvoice("sales", journalBranchCode, tx);
             const [journal] = await tx
                 .insert(journals)
                 .values({
@@ -845,7 +845,7 @@ export const cancelSales = async (req: Request, res: Response) => {
 
             // 7. Create Reversal Journal
             const reversalBranchCode = await resolveBranchCodeFromId(reversalBranchId);
-            const reversalJournalInvoice = await generateJournalInvoice("sales", reversalBranchCode);
+            const reversalJournalInvoice = await generateJournalInvoice("sales", reversalBranchCode, tx);
             const [journal] = await tx
                 .insert(journals)
                 .values({

@@ -14,6 +14,7 @@ import {
     branches,
     productBranches,
     warehouses,
+    transactionDetails,
 } from "@/db/schemas";
 import {
     branchScope,
@@ -258,6 +259,12 @@ export const getProductById = async (req: Request, res: Response) => {
             .from(productBranches)
             .where(eq(productBranches.productId, id));
 
+        const hasTransactionsResult = await db
+            .select({ count: sql<number>`count(*)` })
+            .from(transactionDetails)
+            .where(eq(transactionDetails.productId, id))
+            .then((r) => Number(r[0]?.count || 0) > 0);
+
         const result = {
             ...product,
             isGlobal: product.isGlobal ?? true,
@@ -265,6 +272,7 @@ export const getProductById = async (req: Request, res: Response) => {
             details: detailsWithPrices,
             attributes,
             images,
+            hasTransactions: hasTransactionsResult,
             inventory: {
                 // baseQty is in the smallest base unit (baseRatio = 1)
                 baseQty: Number(qtyResult?.totalQty ?? 0),
@@ -543,6 +551,49 @@ export const updateProduct = async (req: Request, res: Response) => {
         const toDeleteDetails = existingDetails.filter(
             (d) => !incomingDetailIds.has(d.id),
         );
+
+        // Protection: if product has transactions, disallow ratio changes & deletion of transacted units
+        const hasTransactions = await db
+            .select({ count: sql<number>`count(*)` })
+            .from(transactionDetails)
+            .where(eq(transactionDetails.productId, product.id))
+            .then((r) => Number(r[0]?.count || 0) > 0);
+
+        if (hasTransactions) {
+            for (const d of product.details ?? []) {
+                if (d.id && existingDetailIds.has(d.id)) {
+                    const original = existingDetails.find((ed) => ed.id === d.id);
+                    if (original) {
+                        const ratioChanged =
+                            Math.abs(Number(original.ratio) - Number(d.ratio)) > 0.0001;
+                        const baseRatioChanged =
+                            Math.abs(Number(original.baseRatio) - Number(d.baseRatio)) > 0.0001;
+                        if (ratioChanged || baseRatioChanged) {
+                            return res.status(400).json({
+                                message:
+                                    "Rasio satuan tidak dapat diubah karena produk ini sudah memiliki riwayat transaksi.",
+                            });
+                        }
+                    }
+                }
+            }
+
+            if (toDeleteDetails.length > 0) {
+                const deletedDetailIds = toDeleteDetails.map((d) => d.id);
+                const detailHasTrans = await db
+                    .select({ count: sql<number>`count(*)` })
+                    .from(transactionDetails)
+                    .where(inArray(transactionDetails.productDetailId, deletedDetailIds))
+                    .then((r) => Number(r[0]?.count || 0) > 0);
+                if (detailHasTrans) {
+                    return res.status(400).json({
+                        message:
+                            "Satuan unit tidak dapat dihapus karena sudah memiliki riwayat transaksi.",
+                    });
+                }
+            }
+        }
+
         if (toDeleteDetails.length) {
             await db.delete(productDetails).where(
                 inArray(

@@ -68,13 +68,33 @@ export const createProductUnit = async (req: Request, res: Response) => {
             .then((res) => res[0]);
 
         if (existingName) {
-            return res.status(409).json({ message: "Unit already exists" });
+            return res.status(200).json({
+                message: "Unit already exists",
+                unit: existingName,
+            });
+        }
+
+        let abbr = (productUnit.abbreviation || productUnit.name.slice(0, 3)).trim().toLowerCase();
+        const existingAbbr = await db
+            .select()
+            .from(productUnits)
+            .where(eq(productUnits.abbreviation, abbr))
+            .then((res) => res[0]);
+
+        if (existingAbbr) {
+            abbr = `${abbr.slice(0, 2)}${Math.floor(10 + Math.random() * 90)}`;
         }
 
         const [createdUnit] = await db
             .insert(productUnits)
-            .values(productUnit)
+            .values({
+                name: productUnit.name.trim(),
+                abbreviation: abbr,
+            })
             .returning();
+
+        await CacheService.del("product-units:all");
+
         res.status(201).json({
             message: "Unit created successfully",
             unit: createdUnit,

@@ -39,6 +39,11 @@ async function main() {
             "created_at" timestamp NOT NULL DEFAULT now(),
             "updated_at" timestamp NOT NULL DEFAULT now()
         );
+
+        ALTER TABLE "promotions" 
+        ADD COLUMN IF NOT EXISTS "product_id" uuid REFERENCES "products"("id") ON DELETE SET NULL,
+        ADD COLUMN IF NOT EXISTS "contact_id" uuid REFERENCES "contacts"("id") ON DELETE SET NULL,
+        ADD COLUMN IF NOT EXISTS "rules" jsonb DEFAULT '[]'::jsonb;
     `);
     console.log("Promotions table checked/created.");
 
@@ -75,6 +80,11 @@ async function main() {
             "discount_amount" numeric(12, 2) NOT NULL DEFAULT '0',
             "used_at" timestamp NOT NULL DEFAULT now()
         );
+
+        ALTER TABLE "promotions" 
+        ADD COLUMN IF NOT EXISTS "product_id" uuid REFERENCES "products"("id") ON DELETE SET NULL,
+        ADD COLUMN IF NOT EXISTS "contact_id" uuid REFERENCES "contacts"("id") ON DELETE SET NULL,
+        ADD COLUMN IF NOT EXISTS "rules" jsonb DEFAULT '[]'::jsonb;
     `);
     console.log("Voucher usages table checked/created.");
 

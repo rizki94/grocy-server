@@ -304,7 +304,7 @@ export async function checkout(req: Request, res: Response) {
 
             const salesJournalBranchId = await resolveBranchId(transaction.branchId, req);
             const salesJournalBranchCode = await resolveBranchCodeFromId(salesJournalBranchId);
-            const salesJournalInvoice = await generateJournalInvoice("pos", salesJournalBranchCode);
+            const salesJournalInvoice = await generateJournalInvoice("pos", salesJournalBranchCode, tx);
             const [salesJournal] = await tx
                 .insert(journals)
                 .values({
@@ -389,6 +389,15 @@ export async function checkout(req: Request, res: Response) {
                 { method: paymentMethod, amount: paidAmount },
             ];
 
+            const paymentDate = new Date().toISOString().split("T")[0];
+            const paymentDebitEntries: Array<{
+                glAccountId: string;
+                amount: number;
+                methodName: string;
+            }> = [];
+            let totalArReduction = 0;
+            let totalRoundAmount = 0;
+
             for (const item of paymentItems) {
                 let itemAmount = Number(item.amount);
                 if (itemAmount <= 0) continue;
@@ -407,7 +416,7 @@ export async function checkout(req: Request, res: Response) {
                     .values({
                         contactId,
                         branchId: transaction.branchId,
-                        date: new Date().toISOString().split("T")[0],
+                        date: paymentDate,
                         type: "receivable",
                         totalAmount: itemAmount,
                         status: "posted",
@@ -435,6 +444,9 @@ export async function checkout(req: Request, res: Response) {
                     roundAmount = roundingDifference;
                     arReduction = itemAmount - roundingDifference;
                 }
+
+                totalArReduction += arReduction;
+                totalRoundAmount += roundAmount;
 
                 await tx.insert(paymentLines).values({
                     paymentId: payment.id,
@@ -480,53 +492,63 @@ export async function checkout(req: Request, res: Response) {
                         amount: itemAmount,
                     });
 
-                    // Create Payment Journal
-                    const paymentJournalBranchId = await resolveBranchId(transaction.branchId, req);
-                    const paymentJournalBranchCode = await resolveBranchCodeFromId(paymentJournalBranchId);
-                    const paymentJournalInvoice = await generateJournalInvoice("ar_payment", paymentJournalBranchCode);
-                    const [paymentJournal] = await tx
-                        .insert(journals)
-                        .values({
-                            invoice: paymentJournalInvoice,
-                            transactionId: transaction.id,
-                            branchId: paymentJournalBranchId,
-                            date: payment.date,
-                            description: `Pembayaran ${transaction.invoice}`,
-                            status: "posted",
-                        })
-                        .returning();
+                    paymentDebitEntries.push({
+                        glAccountId,
+                        amount: itemAmount,
+                        methodName: activeMethodName,
+                    });
+                }
+            }
 
-                    // Dr Cash/Bank
+            // Create ONE Consolidated Payment Journal if there are payments
+            if (paymentDebitEntries.length > 0) {
+                const paymentJournalBranchId = await resolveBranchId(transaction.branchId, req);
+                const paymentJournalBranchCode = await resolveBranchCodeFromId(paymentJournalBranchId);
+                const paymentJournalInvoice = await generateJournalInvoice("ar_payment", paymentJournalBranchCode, tx);
+                const [paymentJournal] = await tx
+                    .insert(journals)
+                    .values({
+                        invoice: paymentJournalInvoice,
+                        transactionId: transaction.id,
+                        branchId: paymentJournalBranchId,
+                        date: paymentDate,
+                        description: `Pembayaran ${transaction.invoice}`,
+                        status: "posted",
+                    })
+                    .returning();
+
+                // 1. Dr Cash/Bank for each payment method
+                for (const debitEntry of paymentDebitEntries) {
                     await tx.insert(journalEntries).values({
                         journalId: paymentJournal.id,
-                        glAccountId: glAccountId,
-                        debit: itemAmount,
+                        glAccountId: debitEntry.glAccountId,
+                        debit: debitEntry.amount,
                         credit: 0,
-                        note: `Penerimaan ${activeMethodName} ${transaction.invoice}`,
+                        note: `Penerimaan ${debitEntry.methodName} ${transaction.invoice}`,
                     });
+                }
 
-                    // Cr Receivable
-                    const receivableAcc = await findGlAccountByCode("1300");
-                    if (receivableAcc) {
-                        await tx.insert(journalEntries).values({
-                            journalId: paymentJournal.id,
-                            glAccountId: receivableAcc,
-                            debit: 0,
-                            credit: arReduction,
-                            note: `Pelunasan Piutang ${transaction.invoice}`,
-                        });
-                    }
+                // 2. Cr Receivable for total AR reduction
+                const receivableAcc = await findGlAccountByCode("1300");
+                if (receivableAcc && totalArReduction > 0) {
+                    await tx.insert(journalEntries).values({
+                        journalId: paymentJournal.id,
+                        glAccountId: receivableAcc,
+                        debit: 0,
+                        credit: totalArReduction,
+                        note: `Pelunasan Piutang ${transaction.invoice}`,
+                    });
+                }
 
-                    // Cr Rounding (if cash)
-                    if (roundAmount !== 0 && globalSettings?.roundingDifferenceGlAccountId) {
-                        await tx.insert(journalEntries).values({
-                            journalId: paymentJournal.id,
-                            glAccountId: globalSettings.roundingDifferenceGlAccountId,
-                            debit: roundAmount < 0 ? Math.abs(roundAmount) : 0,
-                            credit: roundAmount > 0 ? roundAmount : 0,
-                            note: `Selisih Pembulatan ${transaction.invoice}`,
-                        });
-                    }
+                // 3. Cr/Dr Rounding Difference if applicable
+                if (totalRoundAmount !== 0 && globalSettings?.roundingDifferenceGlAccountId) {
+                    await tx.insert(journalEntries).values({
+                        journalId: paymentJournal.id,
+                        glAccountId: globalSettings.roundingDifferenceGlAccountId,
+                        debit: totalRoundAmount < 0 ? Math.abs(totalRoundAmount) : 0,
+                        credit: totalRoundAmount > 0 ? totalRoundAmount : 0,
+                        note: `Selisih Pembulatan ${transaction.invoice}`,
+                    });
                 }
             }
 
@@ -782,7 +804,7 @@ export async function settlePosInvoice(req: Request, res: Response) {
 
                 const paymentJournalBranchId = await resolveBranchId(openInvoice.branchId, req);
                 const paymentJournalBranchCode = await resolveBranchCodeFromId(paymentJournalBranchId);
-                const paymentJournalInvoice = await generateJournalInvoice("ar_payment", paymentJournalBranchCode);
+                const paymentJournalInvoice = await generateJournalInvoice("ar_payment", paymentJournalBranchCode, tx);
                 const [paymentJournal] = await tx
                     .insert(journals)
                     .values({

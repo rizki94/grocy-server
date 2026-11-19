@@ -17,6 +17,7 @@ export const settings = pgTable("settings", {
     enableTax: boolean("enable_tax").default(true).notNull(),             // global tax toggle
     requireProductFormulaName: boolean("require_product_formula_name").default(false).notNull(), // enforce product naming from formula
     productNamingFormula: text("product_naming_formula").default("").notNull(), // centralized product naming formula pattern
+    formulaBreakdownSeparator: text("formula_breakdown_separator").default("x").notNull(), // separator between units in {unit_breakdown}
     companyName: text("company_name"),
     companyNpwp: text("company_npwp"),
     companyNitku: text("company_nitku"),

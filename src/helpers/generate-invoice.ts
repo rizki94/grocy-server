@@ -166,12 +166,13 @@ const journalPrefixKeyMap: Record<JournalInvoiceType, { key: keyof typeof settin
 export async function generateJournalInvoice(
     type: JournalInvoiceType,
     branchCode?: string | null,
+    dbClient: any = db,
 ) {
     const config = journalPrefixKeyMap[type] || { key: "generalJournalPrefix", defaultPrefix: "JRL" };
     let prefix = config.defaultPrefix;
 
     try {
-        const globalSettings = await db.query.settings.findFirst({
+        const globalSettings = await (dbClient.query?.settings || db.query.settings).findFirst({
             where: eq(settings.id, "global"),
         });
         if (globalSettings && (globalSettings as any)[config.key]) {
@@ -183,13 +184,14 @@ export async function generateJournalInvoice(
 
     const today = new Date().toISOString().slice(0, 10).replaceAll("-", "");
     const normalizedCode = branchCode ? branchCode.trim().toUpperCase().slice(0, 3) : null;
+    const prefixWithBranch = normalizedCode ? `${normalizedCode}-${prefix}-${today}-` : `${prefix}-${today}-`;
 
     const { journals } = await import("@/db/schemas/journal.schema");
-    const lastJournal = await db
+    const lastJournal = await dbClient
         .select({ invoice: journals.invoice })
         .from(journals)
-        .where(like(journals.invoice, `%${prefix}-%`))
-        .orderBy(desc(journals.createdAt))
+        .where(like(journals.invoice, `${prefixWithBranch}%`))
+        .orderBy(desc(journals.invoice))
         .limit(1);
 
     const lastInvoice = lastJournal[0]?.invoice || "";
@@ -199,9 +201,6 @@ export async function generateJournalInvoice(
     const nextNumber = isNaN(lastNumber) ? 1 : lastNumber + 1;
     const seq = String(nextNumber).padStart(4, "0");
 
-    if (normalizedCode) {
-        return `${normalizedCode}-${prefix}-${today}-${seq}`;
-    }
-    return `${prefix}-${today}-${seq}`;
+    return `${prefixWithBranch}${seq}`;
 }
 

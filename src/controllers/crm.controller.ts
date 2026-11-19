@@ -1,8 +1,9 @@
 import { db } from "@/db";
-import { contacts, promotions, vouchers, voucherUsages, products } from "@/db/schemas";
+import { contacts, promotions, vouchers, voucherUsages, products, priceGroups } from "@/db/schemas";
 import { and, desc, eq, ilike, lte, gte, or, sql, count } from "drizzle-orm";
 import { Request, Response } from "express";
 import { logAction } from "@/utils/log-helper";
+import { CacheService } from "@/services/cache-service";
 
 // ==========================================
 // VOUCHERS CONTROLLERS
@@ -409,11 +410,20 @@ export async function getPaginatedPromotions(req: Request, res: Response) {
             .limit(pageSize)
             .offset(offset);
 
-        // Enhance with product names if buyProductId / getProductId present
+        // Enhance with product names if productId / buyProductId / getProductId / rules present
         const productIds = new Set<string>();
+        const contactIds = new Set<string>();
+
         items.forEach((p) => {
+            if (p.productId) productIds.add(p.productId);
             if (p.buyProductId) productIds.add(p.buyProductId);
             if (p.getProductId) productIds.add(p.getProductId);
+            if (p.contactId) contactIds.add(p.contactId);
+            if (Array.isArray(p.rules)) {
+                p.rules.forEach((r: any) => {
+                    if (r.productId) productIds.add(r.productId);
+                });
+            }
         });
 
         const productMap = new Map<string, string>();
@@ -425,11 +435,35 @@ export async function getPaginatedPromotions(req: Request, res: Response) {
             matchedProducts.forEach((mp) => productMap.set(mp.id, mp.name));
         }
 
-        const enhancedItems = items.map((item) => ({
-            ...item,
-            buyProductName: item.buyProductId ? productMap.get(item.buyProductId) || null : null,
-            getProductName: item.getProductId ? productMap.get(item.getProductId) || null : null,
-        }));
+        const contactMap = new Map<string, string>();
+        if (contactIds.size > 0) {
+            const matchedContacts = await db
+                .select({ id: contacts.id, name: contacts.name })
+                .from(contacts)
+                .where(sql`${contacts.id} IN (${Array.from(contactIds).map((id) => `'${id}'`).join(",")})`);
+            matchedContacts.forEach((mc) => contactMap.set(mc.id, mc.name));
+        }
+
+        const enhancedItems = items.map((item) => {
+            const enhancedRules = Array.isArray(item.rules)
+                ? item.rules.map((r: any) => ({
+                      ...r,
+                      productName: r.productName || (r.productId && productMap.get(r.productId)) || null,
+                  }))
+                : [];
+
+            return {
+                ...item,
+                rules: enhancedRules,
+                contactName: item.contactId ? contactMap.get(item.contactId) || null : null,
+                productName:
+                    (item.productId && productMap.get(item.productId)) ||
+                    (item.buyProductId && productMap.get(item.buyProductId)) ||
+                    (enhancedRules.length > 0 ? enhancedRules.map((r) => r.productName || "Item").join(", ") : null),
+                buyProductName: item.buyProductId ? productMap.get(item.buyProductId) || null : null,
+                getProductName: item.getProductId ? productMap.get(item.getProductId) || null : null,
+            };
+        });
 
         res.status(200).json({
             items: enhancedItems,
@@ -460,9 +494,18 @@ export async function getActivePromotions(req: Request, res: Response) {
             .orderBy(desc(promotions.createdAt));
 
         const productIds = new Set<string>();
+        const contactIds = new Set<string>();
+
         activeList.forEach((p) => {
+            if (p.productId) productIds.add(p.productId);
             if (p.buyProductId) productIds.add(p.buyProductId);
             if (p.getProductId) productIds.add(p.getProductId);
+            if (p.contactId) contactIds.add(p.contactId);
+            if (Array.isArray(p.rules)) {
+                p.rules.forEach((r: any) => {
+                    if (r.productId) productIds.add(r.productId);
+                });
+            }
         });
 
         const productMap = new Map<string, { id: string; name: string }>();
@@ -474,11 +517,35 @@ export async function getActivePromotions(req: Request, res: Response) {
             matchedProducts.forEach((mp) => productMap.set(mp.id, mp));
         }
 
-        const enhanced = activeList.map((item) => ({
-            ...item,
-            buyProductName: item.buyProductId ? productMap.get(item.buyProductId)?.name || null : null,
-            getProductName: item.getProductId ? productMap.get(item.getProductId)?.name || null : null,
-        }));
+        const contactMap = new Map<string, string>();
+        if (contactIds.size > 0) {
+            const matchedContacts = await db
+                .select({ id: contacts.id, name: contacts.name })
+                .from(contacts)
+                .where(sql`${contacts.id} IN (${Array.from(contactIds).map((id) => `'${id}'`).join(",")})`);
+            matchedContacts.forEach((mc) => contactMap.set(mc.id, mc.name));
+        }
+
+        const enhanced = activeList.map((item) => {
+            const enhancedRules = Array.isArray(item.rules)
+                ? item.rules.map((r: any) => ({
+                      ...r,
+                      productName: r.productName || (r.productId && productMap.get(r.productId)?.name) || null,
+                  }))
+                : [];
+
+            return {
+                ...item,
+                rules: enhancedRules,
+                contactName: item.contactId ? contactMap.get(item.contactId) || null : null,
+                productName:
+                    (item.productId && productMap.get(item.productId)?.name) ||
+                    (item.buyProductId && productMap.get(item.buyProductId)?.name) ||
+                    (enhancedRules.length > 0 ? enhancedRules.map((r) => r.productName || "Item").join(", ") : null),
+                buyProductName: item.buyProductId ? productMap.get(item.buyProductId)?.name || null : null,
+                getProductName: item.getProductId ? productMap.get(item.getProductId)?.name || null : null,
+            };
+        });
 
         res.status(200).json(enhanced);
     } catch (error: any) {
@@ -517,12 +584,15 @@ export async function createPromotion(req: Request, res: Response) {
             discountAmount,
             minSpend,
             maxDiscount,
+            productId,
             buyProductId,
             buyQty,
             getProductId,
             getQty,
             getDiscountPercent,
             memberTier,
+            contactId,
+            rules,
             branchId,
             startDate,
             endDate,
@@ -532,6 +602,23 @@ export async function createPromotion(req: Request, res: Response) {
         if (!name || !name.trim()) {
             return res.status(400).json({ message: "Nama promosi wajib diisi" });
         }
+
+        const sanitizedRules = Array.isArray(rules)
+            ? rules.map((r: any) => ({
+                  productId: r.productId,
+                  productName: r.productName || null,
+                  discountType: r.discountType || "percentage",
+                  discountPercent: Number(r.discountPercent) || 0,
+                  discountAmount: Number(r.discountAmount) || 0,
+                  minQty: Number(r.minQty) || 1,
+                  maxDiscount: Number(r.maxDiscount) || 0,
+              }))
+            : [];
+
+        const effectiveProductId =
+            productId ||
+            buyProductId ||
+            (sanitizedRules.length > 0 ? sanitizedRules[0].productId : null);
 
         const [created] = await db
             .insert(promotions)
@@ -543,12 +630,15 @@ export async function createPromotion(req: Request, res: Response) {
                 discountAmount: String(discountAmount || 0),
                 minSpend: String(minSpend || 0),
                 maxDiscount: String(maxDiscount || 0),
-                buyProductId: buyProductId || null,
+                productId: effectiveProductId,
+                buyProductId: effectiveProductId,
                 buyQty: Number(buyQty) || 1,
                 getProductId: getProductId || null,
                 getQty: Number(getQty) || 1,
                 getDiscountPercent: String(getDiscountPercent !== undefined ? getDiscountPercent : 100),
                 memberTier: memberTier || "all",
+                contactId: contactId || null,
+                rules: sanitizedRules,
                 branchId: branchId || null,
                 startDate: new Date(startDate || Date.now()),
                 endDate: new Date(endDate || Date.now() + 30 * 24 * 60 * 60 * 1000),
@@ -582,17 +672,43 @@ export async function updatePromotion(req: Request, res: Response) {
             discountAmount,
             minSpend,
             maxDiscount,
+            productId,
             buyProductId,
             buyQty,
             getProductId,
             getQty,
             getDiscountPercent,
             memberTier,
+            contactId,
+            rules,
             branchId,
             startDate,
             endDate,
             isActive,
         } = req.body;
+
+        const sanitizedRules = rules !== undefined
+            ? (Array.isArray(rules)
+                  ? rules.map((r: any) => ({
+                        productId: r.productId,
+                        productName: r.productName || null,
+                        discountType: r.discountType || "percentage",
+                        discountPercent: Number(r.discountPercent) || 0,
+                        discountAmount: Number(r.discountAmount) || 0,
+                        minQty: Number(r.minQty) || 1,
+                        maxDiscount: Number(r.maxDiscount) || 0,
+                    }))
+                  : [])
+            : undefined;
+
+        const effectiveProductId =
+            productId !== undefined
+                ? productId || null
+                : buyProductId !== undefined
+                  ? buyProductId || null
+                  : sanitizedRules && sanitizedRules.length > 0
+                    ? sanitizedRules[0].productId
+                    : undefined;
 
         const [updated] = await db
             .update(promotions)
@@ -604,12 +720,14 @@ export async function updatePromotion(req: Request, res: Response) {
                 ...(discountAmount !== undefined ? { discountAmount: String(discountAmount) } : {}),
                 ...(minSpend !== undefined ? { minSpend: String(minSpend) } : {}),
                 ...(maxDiscount !== undefined ? { maxDiscount: String(maxDiscount) } : {}),
-                ...(buyProductId !== undefined ? { buyProductId: buyProductId || null } : {}),
+                ...(effectiveProductId !== undefined ? { productId: effectiveProductId, buyProductId: effectiveProductId } : {}),
                 ...(buyQty !== undefined ? { buyQty: Number(buyQty) } : {}),
                 ...(getProductId !== undefined ? { getProductId: getProductId || null } : {}),
                 ...(getQty !== undefined ? { getQty: Number(getQty) } : {}),
                 ...(getDiscountPercent !== undefined ? { getDiscountPercent: String(getDiscountPercent) } : {}),
                 ...(memberTier !== undefined ? { memberTier } : {}),
+                ...(contactId !== undefined ? { contactId: contactId || null } : {}),
+                ...(sanitizedRules !== undefined ? { rules: sanitizedRules } : {}),
                 ...(branchId !== undefined ? { branchId: branchId || null } : {}),
                 ...(startDate ? { startDate: new Date(startDate) } : {}),
                 ...(endDate ? { endDate: new Date(endDate) } : {}),
@@ -707,8 +825,25 @@ export async function getPaginatedMembers(req: Request, res: Response) {
         const total = totalResult?.count || 0;
 
         const items = await db
-            .select()
+            .select({
+                id: contacts.id,
+                name: contacts.name,
+                phone: contacts.phone,
+                email: contacts.email,
+                address: contacts.address,
+                contactType: contacts.contactType,
+                isMember: contacts.isMember,
+                memberCode: contacts.memberCode,
+                memberTier: contacts.memberTier,
+                points: contacts.points,
+                birthDate: contacts.birthDate,
+                priceGroupId: contacts.priceGroupId,
+                priceGroupName: priceGroups.name,
+                createdAt: contacts.createdAt,
+                updatedAt: contacts.updatedAt,
+            })
             .from(contacts)
+            .leftJoin(priceGroups, eq(contacts.priceGroupId, priceGroups.id))
             .where(whereClause)
             .orderBy(desc(contacts.updatedAt))
             .limit(pageSize)
@@ -769,7 +904,7 @@ export async function getMemberSummary(req: Request, res: Response) {
 
 export async function registerMember(req: Request, res: Response) {
     try {
-        const { contactId, name, phone, email, address, memberCode, memberTier, birthDate } = req.body;
+        const { contactId, name, phone, email, address, memberCode, memberTier, birthDate, priceGroupId } = req.body;
 
         const now = new Date();
         const codeSuffix = Math.floor(1000 + Math.random() * 9000);
@@ -779,6 +914,25 @@ export async function registerMember(req: Request, res: Response) {
         const formattedBirthDate = birthDate
             ? (typeof birthDate === "string" ? birthDate.split("T")[0] : new Date(birthDate).toISOString().split("T")[0])
             : null;
+
+        // Resolve priceGroupId: user-provided or auto-fallback to "Regular" / first active price group
+        let resolvedPriceGroupId = priceGroupId || null;
+        if (!resolvedPriceGroupId) {
+            const [regularPg] = await db
+                .select({ id: priceGroups.id })
+                .from(priceGroups)
+                .where(or(ilike(priceGroups.name, "%regular%"), ilike(priceGroups.name, "%umum%")))
+                .limit(1);
+            if (regularPg) {
+                resolvedPriceGroupId = regularPg.id;
+            } else {
+                const [firstPg] = await db
+                    .select({ id: priceGroups.id })
+                    .from(priceGroups)
+                    .limit(1);
+                resolvedPriceGroupId = firstPg?.id || null;
+            }
+        }
 
         // Check code uniqueness
         const [codeExists] = await db
@@ -806,6 +960,7 @@ export async function registerMember(req: Request, res: Response) {
                     memberCode: finalCode,
                     memberTier: memberTier || "standard",
                     birthDate: formattedBirthDate,
+                    ...(resolvedPriceGroupId ? { priceGroupId: resolvedPriceGroupId } : {}),
                     updatedAt: new Date(),
                 })
                 .where(eq(contacts.id, contactId))
@@ -829,6 +984,7 @@ export async function registerMember(req: Request, res: Response) {
                     memberCode: finalCode,
                     memberTier: memberTier || "standard",
                     birthDate: formattedBirthDate,
+                    priceGroupId: resolvedPriceGroupId,
                     points: 0,
                 })
                 .returning();
@@ -843,6 +999,11 @@ export async function registerMember(req: Request, res: Response) {
             msg: `Customer registered as member: ${savedContact?.name} (${finalCode})`,
         });
 
+        await Promise.all([
+            CacheService.del("customers:all"),
+            CacheService.del("customers:active"),
+        ]).catch(() => {});
+
         res.status(200).json(savedContact);
     } catch (error: any) {
         console.error("Error registerMember:", error);
@@ -853,7 +1014,7 @@ export async function registerMember(req: Request, res: Response) {
 export async function updateMember(req: Request, res: Response) {
     try {
         const { id } = req.params;
-        const { memberCode, memberTier, points, birthDate, isMember } = req.body;
+        const { memberCode, memberTier, points, birthDate, isMember, priceGroupId } = req.body;
 
         const formattedBirthDate = birthDate !== undefined
             ? (birthDate ? (typeof birthDate === "string" ? birthDate.split("T")[0] : new Date(birthDate).toISOString().split("T")[0]) : null)
@@ -867,6 +1028,7 @@ export async function updateMember(req: Request, res: Response) {
                 ...(points !== undefined ? { points: Number(points) } : {}),
                 ...(formattedBirthDate !== undefined ? { birthDate: formattedBirthDate } : {}),
                 ...(isMember !== undefined ? { isMember: Boolean(isMember) } : {}),
+                ...(priceGroupId !== undefined ? { priceGroupId: priceGroupId || null } : {}),
                 updatedAt: new Date(),
             })
             .where(eq(contacts.id, id))
@@ -875,6 +1037,11 @@ export async function updateMember(req: Request, res: Response) {
         if (!updated) {
             return res.status(404).json({ message: "Member not found" });
         }
+
+        await Promise.all([
+            CacheService.del("customers:all"),
+            CacheService.del("customers:active"),
+        ]).catch(() => {});
 
         res.status(200).json(updated);
     } catch (error: any) {

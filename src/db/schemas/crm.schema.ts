@@ -2,6 +2,7 @@ import {
     boolean,
     decimal,
     integer,
+    jsonb,
     pgTable,
     text,
     timestamp,
@@ -11,6 +12,16 @@ import { products } from "./product.schema";
 import { contacts } from "./contact.schema";
 import { transactions } from "./transaction.schema";
 import { branches } from "./branch.schema";
+
+export interface PromotionProductRule {
+    productId: string;
+    productName?: string;
+    discountType: "percentage" | "nominal";
+    discountPercent?: number;
+    discountAmount?: number;
+    minQty?: number;
+    maxDiscount?: number;
+}
 
 export const promotions = pgTable("promotions", {
     id: uuid("id").defaultRandom().primaryKey(),
@@ -22,14 +33,18 @@ export const promotions = pgTable("promotions", {
     discountAmount: decimal("discount_amount", { precision: 12, scale: 2 }).default("0"),
     minSpend: decimal("min_spend", { precision: 12, scale: 2 }).default("0"),
     maxDiscount: decimal("max_discount", { precision: 12, scale: 2 }).default("0"),
-    // Buy X Get Y details
+    // Product & Buy X Get Y details
+    productId: uuid("product_id").references(() => products.id),
     buyProductId: uuid("buy_product_id").references(() => products.id),
     buyQty: integer("buy_qty").default(1),
     getProductId: uuid("get_product_id").references(() => products.id),
     getQty: integer("get_qty").default(1),
     getDiscountPercent: decimal("get_discount_percent", { precision: 5, scale: 2 }).default("100"), // 100 = Free
-    // Member Tier restriction (e.g. "all", "silver", "gold", "platinum")
+    // Member Tier restriction or specific member assignment
     memberTier: text("member_tier").default("all"),
+    contactId: uuid("contact_id").references(() => contacts.id),
+    // Multi-product rules
+    rules: jsonb("rules").$type<PromotionProductRule[]>().default([]),
     branchId: uuid("branch_id").references(() => branches.id),
     startDate: timestamp("start_date").notNull(),
     endDate: timestamp("end_date").notNull(),

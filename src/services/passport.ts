@@ -3,9 +3,10 @@ import { Strategy as LocalStrategy } from "passport-local";
 import bcrypt from "bcrypt";
 import { eq, InferSelectModel } from "drizzle-orm";
 import { db } from "@/db";
-import { users, branches } from "@/db/schemas";
+import { users, branches, roles } from "@/db/schemas";
 import { rolePermissions } from "@/db/schemas/role-permission.schema";
 import { permissions } from "@/db/schemas/permission.schema";
+import { ALL_PERMISSION_CODES } from "@/constants/permissions.constant";
 passport.use(
     new LocalStrategy(async (username, password, done) => {
         try {
@@ -40,7 +41,10 @@ passport.deserializeUser(async (id: string, done) => {
             .where(eq(users.id, id))
             .limit(1);
 
-        if (!user) return done(new Error("User not found"), null);
+        if (!user) {
+            // Stale session or user from another database: treat as unauthenticated
+            return done(null, false);
+        }
 
         let branch = null;
         if (user.branchId) {
@@ -52,25 +56,52 @@ passport.deserializeUser(async (id: string, done) => {
             branch = b || null;
         }
 
-        const rows = await db
-            .select({
-                code: permissions.code,
-                description: permissions.description,
-                hasPermission: rolePermissions.hasPermission,
-            })
-            .from(rolePermissions)
-            .innerJoin(
-                permissions,
-                eq(rolePermissions.permissionId, permissions.id)
-            )
-            .where(eq(rolePermissions.roleId, user.roleId));
+        let roleName = "user";
+        let isSuperAdmin = false;
+        if (user.roleId) {
+            const [role] = await db
+                .select()
+                .from(roles)
+                .where(eq(roles.id, user.roleId))
+                .limit(1);
+            if (role) {
+                roleName = role.name;
+                isSuperAdmin = role.name === "super_admin";
+            }
+        }
 
-        const allowedPermissions = rows
-            .filter((row) => row.hasPermission)
-            .map((row) => row.code);
+        let allowedPermissions: string[] = [];
+
+        if (isSuperAdmin) {
+            // Super Admin always receives all permissions
+            const allPerms = await db
+                .select({ code: permissions.code })
+                .from(permissions);
+            const dbCodes = allPerms.map((p) => p.code);
+            allowedPermissions = Array.from(new Set([...dbCodes, ...ALL_PERMISSION_CODES]));
+        } else {
+            const rows = await db
+                .select({
+                    code: permissions.code,
+                    description: permissions.description,
+                    hasPermission: rolePermissions.hasPermission,
+                })
+                .from(rolePermissions)
+                .innerJoin(
+                    permissions,
+                    eq(rolePermissions.permissionId, permissions.id)
+                )
+                .where(eq(rolePermissions.roleId, user.roleId));
+
+            allowedPermissions = rows
+                .filter((row) => row.hasPermission)
+                .map((row) => row.code);
+        }
 
         const userWithAccess = {
             ...user,
+            role: roleName,
+            isSuperAdmin,
             branch,
             isHq: branch?.isHq ?? false,
             permissions: allowedPermissions,
@@ -78,7 +109,8 @@ passport.deserializeUser(async (id: string, done) => {
 
         done(null, userWithAccess);
     } catch (err) {
-        done(err, null);
+        // Prevent session deserialization failure from crashing requests
+        done(null, false);
     }
 });
 

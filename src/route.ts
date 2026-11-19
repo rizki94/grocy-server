@@ -52,11 +52,14 @@ import stockOpnameRouter from "./routes/stock-opname.route";
 import bankReconciliationRouter from "./routes/bank-reconciliation.route";
 import hrdRouter from "./routes/hrd.route";
 import crmRouter from "./routes/crm.route";
+import tenantRouter from "./routes/tenant.route";
 
 import { refresh } from "./controllers/auth.controller";
 
 export const route = Router();
 
+// Public routes (Auth, Tenant/Onboarding, Bridge)
+route.use("/tenant", tenantRouter);
 route.use("/auth", authRouter);
 route.get("/refresh", refresh);
 route.use("/bridge", bridgeRouter);
