@@ -4,6 +4,7 @@ import {
     getTenantDb,
     getDefaultDatabaseName,
     sanitizeDatabaseName,
+    getTenantSubscriptionStatus,
 } from "@/services/tenant.service";
 
 declare global {
@@ -14,7 +15,7 @@ declare global {
     }
 }
 
-export function tenantMiddleware(
+export async function tenantMiddleware(
     req: Request,
     res: Response,
     next: NextFunction,
@@ -26,6 +27,39 @@ export function tenantMiddleware(
 
     const rawDbName = headerDb || queryDb || sessionDb || getDefaultDatabaseName();
     const cleanDbName = sanitizeDatabaseName(rawDbName);
+
+    // Subscription Expiration Guard for Tenant Databases
+    if (cleanDbName !== getDefaultDatabaseName()) {
+        const exemptPrefixes = [
+            "/healthz",
+            "/api/tenant/databases",
+            "/api/tenant/check-name",
+            "/api/tenant/verify-token",
+            "/api/tenant/create-workspace",
+            "/api/tenant/subscription",
+        ];
+        const isExempt = exemptPrefixes.some(
+            (p) => req.path?.startsWith(p) || req.originalUrl?.startsWith(p),
+        );
+
+        if (!isExempt) {
+            try {
+                const sub = await getTenantSubscriptionStatus(cleanDbName);
+                if (sub.isExpired) {
+                    return res.status(403).json({
+                        code: "TENANT_EXPIRED",
+                        message:
+                            "Masa aktif trial / berlangganan database ini telah berakhir. Silakan hubungi Administrator untuk memperpanjang akses.",
+                        database: cleanDbName,
+                        clientName: sub.clientName,
+                        expiresAt: sub.expiresAt,
+                    });
+                }
+            } catch (e) {
+                // If checking fails, proceed with resilience
+            }
+        }
+    }
 
     try {
         const tenantDb = getTenantDb(cleanDbName);

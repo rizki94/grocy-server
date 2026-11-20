@@ -9,6 +9,7 @@ import {
     syncTenantPermissions,
     ensureEssentialTenantData,
     verifySetupToken,
+    getTenantSubscriptionStatus,
 } from "@/services/tenant.service";
 
 export async function getDatabasesHandler(_req: Request, res: Response) {
@@ -169,6 +170,19 @@ export async function syncPermissionsHandler(req: Request, res: Response) {
     } catch (err: any) {
         res.status(500).json({
             message: "Gagal sinkronisasi permission database",
+            error: err.message,
+        });
+    }
+}
+
+export async function getTenantSubscriptionHandler(req: Request, res: Response) {
+    try {
+        const dbName = (req.query.database as string) || req.databaseName || getDefaultDatabaseName();
+        const sub = await getTenantSubscriptionStatus(dbName);
+        res.json(sub);
+    } catch (err: any) {
+        res.status(500).json({
+            message: "Gagal membaca status subscription tenant",
             error: err.message,
         });
     }

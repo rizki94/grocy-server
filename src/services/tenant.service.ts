@@ -275,6 +275,121 @@ export interface TokenVerificationResult {
     };
 }
 
+export interface TenantSubscriptionStatus {
+    database: string;
+    clientName?: string;
+    isLifetime: boolean;
+    isExpired: boolean;
+    expiresAt: string | null;
+    daysRemaining: number | null;
+    status: "active" | "expired" | "lifetime";
+}
+
+const subscriptionCache = new Map<
+    string,
+    { data: TenantSubscriptionStatus; timestamp: number }
+>();
+
+export async function getTenantSubscriptionStatus(
+    databaseName: string,
+): Promise<TenantSubscriptionStatus> {
+    const cleanName = sanitizeDatabaseName(databaseName);
+    if (cleanName === getDefaultDatabaseName()) {
+        return {
+            database: cleanName,
+            clientName: "Master Admin Internal",
+            isLifetime: true,
+            isExpired: false,
+            expiresAt: null,
+            daysRemaining: null,
+            status: "lifetime",
+        };
+    }
+
+    const cached = subscriptionCache.get(cleanName);
+    if (cached && Date.now() - cached.timestamp < 10000) {
+        return cached.data;
+    }
+
+    // 1. Try monitor API
+    try {
+        const monitorUrl = getMonitorUrl();
+        const res = await fetch(
+            `${monitorUrl}/api/tenants/subscription?database=${encodeURIComponent(cleanName)}`,
+            {
+                signal: AbortSignal.timeout(1200),
+            },
+        );
+        if (res.ok) {
+            const data = (await res.json()) as TenantSubscriptionStatus;
+            subscriptionCache.set(cleanName, { data, timestamp: Date.now() });
+            return data;
+        }
+    } catch {}
+
+    // 2. Direct file fallback from tokens.json
+    try {
+        const candidates = getCandidateTokenPaths();
+        const tokensFile = candidates.find((p) => fs.existsSync(p));
+        if (tokensFile) {
+            const raw = fs.readFileSync(tokensFile, "utf8");
+            const tokens = JSON.parse(raw || "[]");
+            for (const t of tokens) {
+                if (t.usages && t.usages.length > 0) {
+                    const u = t.usages.find(
+                        (usage: any) =>
+                            (usage.databaseName || "").toLowerCase() ===
+                            cleanName.toLowerCase(),
+                    );
+                    if (u) {
+                        const expiresAt =
+                            u.expiresAt !== undefined ? u.expiresAt : t.expiresAt;
+                        const isLifetime = !expiresAt;
+                        let isExpired = false;
+                        let daysRemaining = null;
+                        if (expiresAt) {
+                            const diffMs =
+                                new Date(expiresAt).getTime() - Date.now();
+                            daysRemaining = Math.ceil(diffMs / 86400000);
+                            if (diffMs <= 0) isExpired = true;
+                        }
+                        const sub: TenantSubscriptionStatus = {
+                            database: u.databaseName,
+                            clientName: t.clientName || "General Client",
+                            expiresAt: expiresAt || null,
+                            isLifetime,
+                            isExpired,
+                            daysRemaining,
+                            status: isLifetime
+                                ? "lifetime"
+                                : isExpired
+                                  ? "expired"
+                                  : "active",
+                        };
+                        subscriptionCache.set(cleanName, {
+                            data: sub,
+                            timestamp: Date.now(),
+                        });
+                        return sub;
+                    }
+                }
+            }
+        }
+    } catch {}
+
+    const fallback: TenantSubscriptionStatus = {
+        database: cleanName,
+        clientName: "Standar Workspace",
+        isLifetime: true,
+        isExpired: false,
+        expiresAt: null,
+        daysRemaining: null,
+        status: "lifetime",
+    };
+    subscriptionCache.set(cleanName, { data: fallback, timestamp: Date.now() });
+    return fallback;
+}
+
 const getMonitorUrl = () =>
     process.env.MONITOR_URL ||
     process.env.GROCY_MONITOR_URL ||
@@ -535,6 +650,24 @@ export async function provisionWorkspace(params: WorkspaceProvisionParams) {
 
         // 8. Ensure Essential Foundation Data (GL Accounts, Account Mappings, Settings, Taxes, Return Reasons, Product Attributes)
         await ensureEssentialTenantData(tenantDb);
+
+        // 8b. Seed Initial Company & Print Layout Profile from Setup Token / HQ Branch
+        const initialCompanyName =
+            verification.token?.clientName || params.branch.name || "Grocy Store";
+        const initialCompanyAddress = params.branch.address || "";
+        const initialCompanyPhone = params.branch.phone || "";
+
+        await tenantDb
+            .update(schema.settings)
+            .set({
+                companyName: initialCompanyName,
+                printLayouts: {
+                    companyName: initialCompanyName,
+                    companyAddress: initialCompanyAddress,
+                    companyPhone: initialCompanyPhone,
+                },
+            })
+            .where(eq(schema.settings.id, "global"));
 
         // Resolve Cash & Bank GL Accounts
         const [cashGl] = await tenantDb
