@@ -6,7 +6,7 @@ export const logger = pino({
       {
         target: "pino-pretty",
         options: {
-          colorize: true,
+          colorize: false,
           ignore: "pid,hostname,req,res,responseTime",
           translateTime: "SYS:standard",
           messageFormat: "{msg}",
