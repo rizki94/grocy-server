@@ -4,6 +4,7 @@ import { openInvoices } from "@/db/schemas/payment.schema";
 import { priceGroups } from "@/db/schemas/price-group.schema";
 import { routeGroups } from "@/db/schemas/route-group.schema";
 import { users } from "@/db/schemas/user.schema";
+import { employees } from "@/db/schemas/hrd.schema";
 import { branchScope } from "@/helpers/branch.helper";
 import { logAction } from "@/utils/log-helper";
 import { CacheService } from "@/services/cache-service";
@@ -99,6 +100,8 @@ export const createCustomer = async (req: Request, res: Response) => {
             .insert(contacts)
             .values({
                 ...parsed.data,
+                phone: parsed.data.phone || "",
+                email: parsed.data.email || "",
                 creditLimit: parsed.data.creditLimit?.toString(),
                 latitude: parsed.data.latitude?.toString(),
                 longitude: parsed.data.longitude?.toString(),
@@ -181,6 +184,8 @@ export const updateCustomer = async (req: Request, res: Response) => {
             .update(contacts)
             .set({
                 ...customer,
+                phone: customer.phone || "",
+                email: customer.email || "",
                 creditLimit: customer.creditLimit?.toString(),
                 latitude: customer.latitude?.toString(),
                 longitude: customer.longitude?.toString(),
@@ -371,7 +376,7 @@ export const getPaginatedCustomers = async (req: Request, res: Response) => {
                     routeGroupId: contacts.routeGroupId,
                     routeGroupName: routeGroups.name,
                     salespersonId: contacts.salespersonId,
-                    salespersonName: users.displayName,
+                    salespersonName: sql<string>`COALESCE(${employees.fullName}, ${users.displayName}, '')`,
                     isActive: contacts.isActive,
                     createdAt: contacts.createdAt,
                     updatedAt: contacts.updatedAt,
@@ -380,6 +385,7 @@ export const getPaginatedCustomers = async (req: Request, res: Response) => {
                 .leftJoin(priceGroups, eq(contacts.priceGroupId, priceGroups.id))
                 .leftJoin(routeGroups, eq(contacts.routeGroupId, routeGroups.id))
                 .leftJoin(users, eq(contacts.salespersonId, users.id))
+                .leftJoin(employees, eq(contacts.salespersonId, employees.id))
                 .where(
                     and(eq(contacts.contactType, "customer"), searchCondition),
                 )
