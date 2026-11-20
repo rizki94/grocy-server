@@ -244,6 +244,7 @@ export interface WorkspaceProvisionParams {
     databaseName: string;
     setupToken: string;
     branch: {
+        code?: string;
         name: string;
         address?: string;
         phone?: string;
@@ -606,10 +607,17 @@ export async function provisionWorkspace(params: WorkspaceProvisionParams) {
         const tenantDb = getTenantDb(dbName);
 
         // 4. Create HQ Branch
+        const cleanBranchCode =
+            (params.branch.code || "HQ")
+                .trim()
+                .toUpperCase()
+                .replace(/[^A-Z0-9]/g, "")
+                .slice(0, 3) || "HQ";
+
         const [hqBranch] = await tenantDb
             .insert(schema.branches)
             .values({
-                code: "HQ",
+                code: cleanBranchCode,
                 name: params.branch.name || "Kantor Pusat HQ",
                 address: params.branch.address || "",
                 phone: params.branch.phone || "",

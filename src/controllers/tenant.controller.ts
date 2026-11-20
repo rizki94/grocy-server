@@ -129,6 +129,7 @@ export async function createWorkspaceHandler(req: Request, res: Response) {
             databaseName: cleanDbName,
             setupToken: setupToken.trim(),
             branch: {
+                code: branch.code,
                 name: branch.name,
                 address: branch.address,
                 phone: branch.phone,
