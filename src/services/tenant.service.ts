@@ -278,6 +278,8 @@ export interface TokenVerificationResult {
 export interface TenantSubscriptionStatus {
     database: string;
     clientName?: string;
+    token?: string;
+    createdAt?: string;
     isLifetime: boolean;
     isExpired: boolean;
     expiresAt: string | null;
@@ -298,6 +300,8 @@ export async function getTenantSubscriptionStatus(
         return {
             database: cleanName,
             clientName: "Master Admin Internal",
+            token: "GROCY-MASTER-KEY",
+            createdAt: new Date().toISOString(),
             isLifetime: true,
             isExpired: false,
             expiresAt: null,
@@ -356,6 +360,8 @@ export async function getTenantSubscriptionStatus(
                         const sub: TenantSubscriptionStatus = {
                             database: u.databaseName,
                             clientName: t.clientName || "General Client",
+                            token: t.token,
+                            createdAt: u.usedAt || t.createdAt,
                             expiresAt: expiresAt || null,
                             isLifetime,
                             isExpired,
@@ -380,6 +386,8 @@ export async function getTenantSubscriptionStatus(
     const fallback: TenantSubscriptionStatus = {
         database: cleanName,
         clientName: "Standar Workspace",
+        token: "GROCY-STANDARD-KEY",
+        createdAt: new Date().toISOString(),
         isLifetime: true,
         isExpired: false,
         expiresAt: null,

@@ -31,7 +31,9 @@ export async function checkDatabaseHandler(req: Request, res: Response) {
     try {
         const name = req.query.name as string;
         if (!name) {
-            res.status(400).json({ message: "Parameter 'name' wajib disertakan" });
+            res.status(400).json({
+                message: "Parameter 'name' wajib disertakan",
+            });
             return;
         }
 
@@ -41,7 +43,8 @@ export async function checkDatabaseHandler(req: Request, res: Response) {
                 valid: false,
                 available: false,
                 name: clean,
-                message: "Nama database minimal 3 karakter (huruf, angka, underscore)",
+                message:
+                    "Nama database minimal 3 karakter (huruf, angka, underscore)",
             });
             return;
         }
@@ -159,7 +162,10 @@ export async function getCurrentTenantHandler(req: Request, res: Response) {
 
 export async function syncPermissionsHandler(req: Request, res: Response) {
     try {
-        const targetDbName = req.body?.databaseName || req.databaseName || getDefaultDatabaseName();
+        const targetDbName =
+            req.body?.databaseName ||
+            req.databaseName ||
+            getDefaultDatabaseName();
         const tenantDb = getTenantDb(targetDbName);
         await syncTenantPermissions(tenantDb);
         await ensureEssentialTenantData(tenantDb);
@@ -175,11 +181,20 @@ export async function syncPermissionsHandler(req: Request, res: Response) {
     }
 }
 
-export async function getTenantSubscriptionHandler(req: Request, res: Response) {
+export async function getTenantSubscriptionHandler(
+    req: Request,
+    res: Response,
+) {
     try {
-        const dbName = (req.query.database as string) || req.databaseName || getDefaultDatabaseName();
+        const dbName =
+            (req.query.database as string) ||
+            req.databaseName ||
+            getDefaultDatabaseName();
         const sub = await getTenantSubscriptionStatus(dbName);
-        res.json(sub);
+        res.json({
+            success: true,
+            ...sub,
+        });
     } catch (err: any) {
         res.status(500).json({
             message: "Gagal membaca status subscription tenant",
