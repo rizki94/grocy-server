@@ -66,7 +66,12 @@ export const updateSettings = async (req: Request, res: Response) => {
             posAllowTop: posAllowTop !== undefined ? Boolean(posAllowTop) : true,
             posAllowDownPayment: posAllowDownPayment !== undefined ? Boolean(posAllowDownPayment) : true,
             allowNegativeStock: Boolean(allowNegativeStock),
-            enableInventoryTracking: enableInventoryTracking ?? true,
+            enableInventoryTracking:
+                enableInventoryTracking === false || enableInventoryTracking === "false"
+                    ? false
+                    : enableInventoryTracking !== undefined
+                      ? Boolean(enableInventoryTracking)
+                      : true,
             roundingDifferenceGlAccountId: roundingDifferenceGlAccountId ? roundingDifferenceGlAccountId : null,
             minDateOffset: minDateOffset !== undefined && minDateOffset !== null && minDateOffset !== "" ? Number(minDateOffset) : -365,
             maxDateOffset: maxDateOffset !== undefined && maxDateOffset !== null && maxDateOffset !== "" ? Number(maxDateOffset) : 30,
