@@ -714,6 +714,38 @@ export async function provisionWorkspace(params: WorkspaceProvisionParams) {
             })
             .returning();
 
+        // 9b. Create Standard Work Shift
+        const [defaultShift] = await tenantDb
+            .insert(schema.workShifts)
+            .values({
+                name: "Shift Reguler (08:00 - 17:00)",
+                startTime: "08:00",
+                endTime: "17:00",
+                isActive: true,
+            })
+            .returning();
+
+        // 9c. Create Initial Super Admin Employee Profile (Single Source of Truth)
+        const [adminEmployee] = await tenantDb
+            .insert(schema.employees)
+            .values({
+                nik: "EMP-0001",
+                fullName: params.superAdmin.name || "Super Admin",
+                positionType: "management",
+                position: "Pemilik / Super Admin",
+                department: "Manajemen",
+                branchId: hqBranch.id,
+                userId: adminUser.id,
+                defaultShiftId: defaultShift?.id || null,
+                employmentStatus: "permanent",
+                joinDate: new Date().toISOString().slice(0, 10),
+                baseSalary: 0,
+                dailyAllowance: 0,
+                mobilePin: "1234",
+                isActive: true,
+            })
+            .returning();
+
         // 10. Operational Seeds (Units, Price Groups, Payment Methods, Contacts)
         if (params.useDefaultSeed !== false) {
             // Standard Units
@@ -786,6 +818,7 @@ export async function provisionWorkspace(params: WorkspaceProvisionParams) {
                     name: "Pelanggan Umum",
                     contactType: "customer",
                     priceGroupId: pgRegular.id,
+                    salespersonId: adminEmployee.id,
                     address: "-",
                     phone: "-",
                     email: "-",
@@ -845,6 +878,7 @@ export async function provisionWorkspace(params: WorkspaceProvisionParams) {
                     name: params.customData?.customerName?.trim() || "Pelanggan Umum",
                     contactType: "customer",
                     priceGroupId: pgCustom.id,
+                    salespersonId: adminEmployee.id,
                     address: "-",
                     phone: "-",
                     email: "-",
@@ -876,6 +910,8 @@ export async function provisionWorkspace(params: WorkspaceProvisionParams) {
                 id: adminUser.id,
                 displayName: adminUser.displayName,
                 username: adminUser.username,
+                employeeId: adminEmployee.id,
+                employeeNik: adminEmployee.nik,
             },
         };
     } catch (err: any) {
