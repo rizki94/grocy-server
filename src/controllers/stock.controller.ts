@@ -409,16 +409,18 @@ export const getMovementStocks = async (req: Request, res: Response) => {
                     ) < 0.001,
             );
 
-            const actualUnitQty = detail
-                ? `${Number(detail.qty)} ${detail.unitName}`
-                : `${mov.baseQty} ${mov.defaultUnitName}`;
+            const actualQtyNumber = detail
+                ? Math.abs(Number(detail.qty))
+                : Math.abs(Number(mov.baseQty));
+            const actualUnitName = detail ? detail.unitName : mov.defaultUnitName;
+            const actualUnitQty = `${actualQtyNumber} ${actualUnitName || ""}`.trim();
 
             let smallestUnitQty = "";
             if (smallestUnit) {
                 const count =
                     Math.abs(Number(mov.baseQty)) /
                     Number(smallestUnit.baseRatio);
-                smallestUnitQty = `${count.toFixed(0)} ${smallestUnit.unitName}`;
+                smallestUnitQty = `${count.toFixed(0)} ${smallestUnit.unitName}`.trim();
             }
 
             return {
