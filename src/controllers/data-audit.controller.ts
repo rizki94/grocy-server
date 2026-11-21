@@ -13,10 +13,12 @@ import {
     products,
     warehouses,
     branches,
+    settings,
 } from "@/db/schemas";
 import { sql, eq, and, or, inArray, isNull, notInArray } from "drizzle-orm";
 import { generateJournalInvoice } from "@/helpers/generate-invoice";
 import { resolveBranchCodeFromId, resolveBranchId } from "@/helpers/branch.helper";
+import { updateStockForTransaction } from "@/repositories/stock.repository";
 import { addDays } from "@/helpers/add-days";
 import { logger } from "@/logger";
 
@@ -43,6 +45,14 @@ export interface AuditIssue {
 export async function getDataIntegrityAudit(req: Request, res: Response) {
     try {
         const issues: AuditIssue[] = [];
+
+        // Check global inventory tracking setting
+        const [globalSettings] = await db
+            .select()
+            .from(settings)
+            .where(eq(settings.id, "global"))
+            .limit(1);
+        const trackingEnabled = globalSettings ? globalSettings.enableInventoryTracking : true;
 
         // -------------------------------------------------------------
         // 1. KESEIMBANGAN JURNAL (Debit vs Kredit)
@@ -230,33 +240,35 @@ export async function getDataIntegrityAudit(req: Request, res: Response) {
         }
 
         // b. Transaksi Posted Tanpa Mutasi Stok
-        const postedWithoutMovementsRes = await db.execute(sql`
-            SELECT t.id, t.type, t.invoice, t.date, COUNT(td.id) as item_count
-            FROM transactions t
-            JOIN transaction_details td ON td.transaction_id = t.id
-            JOIN products p ON p.id = td.product_id AND p.track_inventory = true
-            LEFT JOIN stock_movements sm ON sm.transaction_id = t.id
-            WHERE t.status = 'posted'
-              AND t.type IN ('sales', 'purchase', 'sales_return', 'purchase_return', 'adjustment', 'transfer_stock')
-              AND sm.id IS NULL
-            GROUP BY t.id, t.type, t.invoice, t.date
-            ORDER BY t.date DESC;
-        `);
+        if (trackingEnabled) {
+            const postedWithoutMovementsRes = await db.execute(sql`
+                SELECT t.id, t.type, t.invoice, t.date, COUNT(td.id) as item_count
+                FROM transactions t
+                JOIN transaction_details td ON td.transaction_id = t.id
+                JOIN products p ON p.id = td.product_id
+                LEFT JOIN stock_movements sm ON sm.transaction_id = t.id
+                WHERE t.status = 'posted'
+                  AND t.type IN ('sales', 'purchase', 'sales_return', 'purchase_return', 'adjustment', 'transfer_stock')
+                  AND sm.id IS NULL
+                GROUP BY t.id, t.type, t.invoice, t.date
+                ORDER BY t.date DESC;
+            `);
 
-        for (const row of postedWithoutMovementsRes.rows as any[]) {
-            issues.push({
-                id: row.id,
-                category: "stock_integrity",
-                type: "missing_stock_movement",
-                reference: row.invoice,
-                date: row.date,
-                description: `Transaksi posted #${row.invoice} berisi ${row.item_count} barang tetapi tidak memiliki catatan mutasi stok`,
-                expectedValue: `${row.item_count} items`,
-                actualValue: "0 movements",
-                canAutoFix: true,
-                fixAction: "recreate_stock_movements",
-                details: { transactionId: row.id, type: row.type },
-            });
+            for (const row of postedWithoutMovementsRes.rows as any[]) {
+                issues.push({
+                    id: row.id,
+                    category: "stock_integrity",
+                    type: "missing_stock_movement",
+                    reference: row.invoice,
+                    date: row.date,
+                    description: `Transaksi posted #${row.invoice} berisi ${row.item_count} barang tetapi tidak memiliki catatan mutasi stok`,
+                    expectedValue: `${row.item_count} items`,
+                    actualValue: "0 movements",
+                    canAutoFix: true,
+                    fixAction: "recreate_stock_movements",
+                    details: { transactionId: row.id, type: row.type },
+                });
+            }
         }
 
         // c. Stok Negatif (Stok Minus)
@@ -454,7 +466,7 @@ export async function reconcileDataIntegrity(req: Request, res: Response) {
 
     try {
         let fixedCount = 0;
-        const details: string[] = [];
+        const reportLogs: string[] = [];
 
         await db.transaction(async (tx) => {
             // ---------------------------------------------------------
@@ -475,7 +487,7 @@ export async function reconcileDataIntegrity(req: Request, res: Response) {
 
                 if (updated.rows.length > 0) {
                     fixedCount += updated.rows.length;
-                    details.push(`Berhasil mengaktifkan (posted) ${updated.rows.length} jurnal transaksi draft.`);
+                    reportLogs.push(`Berhasil mengaktifkan (posted) ${updated.rows.length} jurnal transaksi draft.`);
                 }
             }
 
@@ -497,7 +509,7 @@ export async function reconcileDataIntegrity(req: Request, res: Response) {
 
                 if (updated.rows.length > 0) {
                     fixedCount += updated.rows.length;
-                    details.push(`Membatalkan (cancelled) ${updated.rows.length} jurnal yang transaksinya telah dibatalkan.`);
+                    reportLogs.push(`Membatalkan (cancelled) ${updated.rows.length} jurnal yang transaksinya telah dibatalkan.`);
                 }
             }
 
@@ -535,7 +547,7 @@ export async function reconcileDataIntegrity(req: Request, res: Response) {
 
                 if (syncedStocks.rows.length > 0) {
                     fixedCount += syncedStocks.rows.length;
-                    details.push(`Berhasil menyelaraskan saldo master ${syncedStocks.rows.length} stok dengan mutasi riil.`);
+                    reportLogs.push(`Berhasil menyelaraskan saldo master ${syncedStocks.rows.length} stok dengan mutasi riil.`);
                 }
             }
 
@@ -583,7 +595,7 @@ export async function reconcileDataIntegrity(req: Request, res: Response) {
 
                 if (totalOrphans > 0) {
                     fixedCount += totalOrphans;
-                    details.push(`Membersihkan ${totalOrphans} record orphan (jurnal, entri, mutasi, open invoice yatim).`);
+                    reportLogs.push(`Membersihkan ${totalOrphans} record orphan (jurnal, entri, mutasi, open invoice yatim).`);
                 }
             }
 
@@ -605,7 +617,7 @@ export async function reconcileDataIntegrity(req: Request, res: Response) {
 
                 if (updated.rows.length > 0) {
                     fixedCount += updated.rows.length;
-                    details.push(`Menyelaraskan nominal ${updated.rows.length} open invoice dengan nominal transaksi.`);
+                    reportLogs.push(`Menyelaraskan nominal ${updated.rows.length} open invoice dengan nominal transaksi.`);
                 }
             }
 
@@ -708,9 +720,62 @@ export async function reconcileDataIntegrity(req: Request, res: Response) {
                         }
 
                         fixedCount++;
-                        details.push(`Berhasil menerbitkan ulang jurnal #${journalInvoice} untuk transaksi #${trx.invoice}.`);
+                        reportLogs.push(`Berhasil menerbitkan ulang jurnal #${journalInvoice} untuk transaksi #${trx.invoice}.`);
                     } catch (genErr: any) {
                         logger.warn({ err: genErr }, `Failed to regenerate journal for ${trx.invoice}`);
+                    }
+                }
+            }
+
+            // ---------------------------------------------------------
+            // ACTION: RECREATE MISSING STOCK MOVEMENTS
+            // ---------------------------------------------------------
+            if (action === "fix-all" || fixType === "recreate_stock_movements") {
+                const targetTrxQuery = targetId
+                    ? sql`SELECT t.* FROM transactions t WHERE t.id = ${targetId} AND t.status = 'posted'`
+                    : sql`
+                        SELECT t.* 
+                        FROM transactions t
+                        JOIN transaction_details td ON td.transaction_id = t.id
+                        JOIN products p ON p.id = td.product_id
+                        LEFT JOIN stock_movements sm ON sm.transaction_id = t.id
+                        WHERE t.status = 'posted'
+                          AND t.type IN ('sales', 'purchase', 'sales_return', 'purchase_return', 'adjustment', 'transfer_stock')
+                          AND sm.id IS NULL
+                        GROUP BY t.id
+                    `;
+
+                const targetTrx = await tx.execute(targetTrxQuery);
+
+                for (const trx of targetTrx.rows as any[]) {
+                    try {
+                        const trxItems = await tx
+                            .select()
+                            .from(transactionDetails)
+                            .where(eq(transactionDetails.transactionId, trx.id));
+
+                        if (trxItems.length > 0) {
+                            await updateStockForTransaction(
+                                trx.id,
+                                trx.type,
+                                trxItems.map((d: any) => ({
+                                    productId: d.productId,
+                                    warehouseId: d.warehouseId,
+                                    qty: Number(d.qty),
+                                    baseRatio: Number(d.baseRatio || 1),
+                                    movementType: Number(d.movementType),
+                                    unitCost: Number(d.unitCost || 0),
+                                    batchNumber: d.batchNumber,
+                                    expiryDate: d.expiryDate,
+                                    serialNumbers: d.serialNumbers,
+                                })),
+                                tx,
+                            );
+                            fixedCount++;
+                            reportLogs.push(`Berhasil mencatatkan mutasi stok untuk transaksi #${trx.invoice}.`);
+                        }
+                    } catch (smErr: any) {
+                        logger.warn({ err: smErr }, `Failed to recreate movements for ${trx.invoice}`);
                     }
                 }
             }
@@ -719,7 +784,7 @@ export async function reconcileDataIntegrity(req: Request, res: Response) {
         return res.json({
             success: true,
             fixedCount,
-            details,
+            details: reportLogs,
             message:
                 fixedCount > 0
                     ? `Rekonsiliasi data selesai. Berhasil memperbaiki ${fixedCount} item data.`
