@@ -5,7 +5,7 @@ import bcrypt from "bcrypt";
 import { logAction } from "@/utils/log-helper";
 import { CacheService } from "@/services/cache-service";
 import { PgColumn } from "drizzle-orm/pg-core";
-import { roles, users, branches } from "@/db/schemas";
+import { roles, users, branches, employees } from "@/db/schemas";
 import {
     userInsertSchema,
     userUpdateSchema,
@@ -36,8 +36,11 @@ export const getUserById = async (req: Request, res: Response) => {
                 roleId: users.roleId,
                 branchId: users.branchId,
                 isActive: users.isActive,
+                employeeId: employees.id,
+                employeeName: employees.fullName,
             })
             .from(users)
+            .leftJoin(employees, eq(employees.userId, users.id))
             .where(eq(users.id, id))
             .limit(1);
 
@@ -59,7 +62,7 @@ export const createUser = async (req: Request, res: Response) => {
         });
     }
 
-    const userData = parsed.data;
+    const { employeeId, ...userData } = parsed.data;
 
     try {
         const existingUser = await db
@@ -79,6 +82,13 @@ export const createUser = async (req: Request, res: Response) => {
                 password: await bcrypt.hash(userData.password, 10),
             }, req))
             .returning();
+
+        if (employeeId) {
+            await db
+                .update(employees)
+                .set({ userId: createdUser.id })
+                .where(eq(employees.id, employeeId));
+        }
 
         logAction(req, {
             action: "insert",
@@ -114,7 +124,7 @@ export const updateUser = async (req: Request, res: Response) => {
         return res.status(401).json({ message: "Unauthorized" });
     }
 
-    const { password, ...rest } = parsed.data;
+    const { password, employeeId, ...rest } = parsed.data;
 
     try {
         const oldUser = await db
@@ -147,6 +157,21 @@ export const updateUser = async (req: Request, res: Response) => {
             .set(updateData)
             .where(eq(users.id, rest.id))
             .returning();
+
+        if (employeeId !== undefined) {
+            // If another employee had this userId, unlink it first
+            await db
+                .update(employees)
+                .set({ userId: null })
+                .where(eq(employees.userId, rest.id));
+
+            if (employeeId) {
+                await db
+                    .update(employees)
+                    .set({ userId: rest.id })
+                    .where(eq(employees.id, employeeId));
+            }
+        }
 
         const { password: _, ...safeUser } = updatedUser;
 
@@ -218,10 +243,13 @@ export const getPaginatedUsers = async (req: Request, res: Response) => {
                     isActive: users.isActive,
                     cashGlAccountId: users.cashGlAccountId,
                     posWarehouseId: users.posWarehouseId,
+                    employeeId: employees.id,
+                    employeeName: employees.fullName,
                 })
                 .from(users)
                 .innerJoin(roles, eq(roles.id, users.roleId))
                 .leftJoin(branches, eq(branches.id, users.branchId))
+                .leftJoin(employees, eq(employees.userId, users.id))
                 .where(searchCondition)
                 .orderBy(order === "desc" ? desc(sortColumn) : asc(sortColumn))
                 .limit(pageSize)

@@ -21,6 +21,7 @@ import { posSessions } from "./pos-session.schema";
 import { returnReasons } from "./return-reason.schema";
 import { marketplaces } from "./marketplace.schema";
 import { branches } from "./branch.schema";
+import { employees } from "./hrd.schema";
 
 export const transactionStatusEnum = pgEnum(
     "transaction_status",
@@ -49,6 +50,8 @@ export const transactions = pgTable("transactions", {
     userId: uuid("user_id")
         .notNull()
         .references(() => users.id),
+    salespersonId: uuid("salesperson_id").references(() => employees.id),
+    purchasingPicId: uuid("purchasing_pic_id").references(() => employees.id),
     branchId: uuid("branch_id")
         .references(() => branches.id)
         .notNull(),
@@ -117,6 +120,14 @@ export const transactionsRelations = relations(
         posSession: one(posSessions, {
             fields: [transactions.posSessionId],
             references: [posSessions.id],
+        }),
+        salesperson: one(employees, {
+            fields: [transactions.salespersonId],
+            references: [employees.id],
+        }),
+        purchasingPic: one(employees, {
+            fields: [transactions.purchasingPicId],
+            references: [employees.id],
         }),
     }),
 );

@@ -22,6 +22,19 @@ export const employeeInsertSchema = z.object({
     idCardNumber: z.string().optional().nullable(),
     department: z.string().min(1, "Department is required"),
     position: z.string().min(1, "Position is required"),
+    positionType: z
+        .enum([
+            "salesman",
+            "driver",
+            "purchasing",
+            "cashier",
+            "warehouse",
+            "finance",
+            "management",
+            "it",
+            "other",
+        ])
+        .default("other"),
     branchId: z.string().uuid("Branch is required"),
     userId: z.string().uuid().optional().nullable().or(z.literal("")),
     defaultShiftId: z.string().uuid().optional().nullable().or(z.literal("")),
@@ -35,6 +48,21 @@ export const employeeInsertSchema = z.object({
     bankAccountHolder: z.string().optional().nullable(),
     mobilePin: z.string().optional().nullable().or(z.literal("")),
     isActive: z.boolean().default(true),
+    createUser: z
+        .object({
+            username: z.string().min(3),
+            password: z.string().min(6),
+            roleId: z.string().uuid(),
+        })
+        .optional()
+        .nullable(),
+    createDriver: z
+        .object({
+            defaultTruckId: z.string().uuid().optional().nullable().or(z.literal("")),
+            color: z.string().optional(),
+        })
+        .optional()
+        .nullable(),
 });
 
 export const employeeUpdateSchema = employeeInsertSchema.extend({

@@ -38,6 +38,7 @@ export const employees = pgTable("employees", {
     idCardNumber: text("id_card_number"), // No KTP
     department: text("department").notNull(), // Kasir, Gudang, Logistik, Penjualan, Manajemen
     position: text("position").notNull(),     // Kepala Toko, Kasir Senior, Helper, Supir
+    positionType: text("position_type").notNull().default("other"), // salesman, driver, purchasing, cashier, warehouse, finance, management, it, other
     branchId: uuid("branch_id")
         .notNull()
         .references(() => branches.id),

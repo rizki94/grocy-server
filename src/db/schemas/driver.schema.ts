@@ -7,10 +7,13 @@ import {
 } from "drizzle-orm/pg-core";
 import { trucks } from "./truck.schema";
 import { branches } from "./branch.schema";
+import { employees } from "./hrd.schema";
+import { relations } from "drizzle-orm";
 
 export const drivers = pgTable("drivers", {
     id: uuid("id").defaultRandom().primaryKey(),
     name: text("name").notNull(),
+    employeeId: uuid("employee_id").references(() => employees.id),
     branchId: uuid("branch_id")
         .notNull()
         .references(() => branches.id),
@@ -23,3 +26,18 @@ export const drivers = pgTable("drivers", {
         .notNull()
         .$onUpdate(() => new Date()),
 });
+
+export const driversRelations = relations(drivers, ({ one }) => ({
+    branch: one(branches, {
+        fields: [drivers.branchId],
+        references: [branches.id],
+    }),
+    truck: one(trucks, {
+        fields: [drivers.defaultTruckId],
+        references: [trucks.id],
+    }),
+    employee: one(employees, {
+        fields: [drivers.employeeId],
+        references: [employees.id],
+    }),
+}));

@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import { db } from "@/db";
-import { drivers, trucks } from "@/db/schemas";
-import { and, eq } from "drizzle-orm";
+import { drivers, trucks, employees } from "@/db/schemas";
+import { and, eq, sql } from "drizzle-orm";
 import { branchScope, withBranch } from "@/helpers/branch.helper";
 
 const RANDOM_COLORS = [
@@ -29,17 +29,21 @@ export const getDrivers = async (req: Request, res: Response) => {
         const rows = await db
             .select({
                 id: drivers.id,
-                name: drivers.name,
+                name: sql<string>`COALESCE(${employees.fullName}, ${drivers.name})`,
                 color: drivers.color,
                 defaultTruckId: drivers.defaultTruckId,
                 defaultTruckName: trucks.name,
                 defaultTruckPlate: trucks.licensePlate,
+                employeeId: drivers.employeeId,
+                employeeNik: employees.nik,
+                employeePhone: employees.phone,
                 isActive: drivers.isActive,
                 branchId: drivers.branchId,
                 createdAt: drivers.createdAt,
             })
             .from(drivers)
             .leftJoin(trucks, eq(trucks.id, drivers.defaultTruckId))
+            .leftJoin(employees, eq(employees.id, drivers.employeeId))
             .where(scope)
             .orderBy(drivers.name);
 
@@ -52,10 +56,21 @@ export const getDrivers = async (req: Request, res: Response) => {
 
 export const createDriver = async (req: Request, res: Response) => {
     try {
-        const { name, color, defaultTruckId, isActive } = req.body;
+        let { name, employeeId, color, defaultTruckId, isActive } = req.body;
+
+        if (employeeId) {
+            const [emp] = await db
+                .select({ fullName: employees.fullName })
+                .from(employees)
+                .where(eq(employees.id, employeeId))
+                .limit(1);
+            if (emp) {
+                name = emp.fullName;
+            }
+        }
 
         if (!name) {
-            return res.status(400).json({ message: "Driver name is required" });
+            return res.status(400).json({ message: "Driver name or Employee is required" });
         }
 
         const chosenColor = color || getRandomColor();
@@ -65,6 +80,7 @@ export const createDriver = async (req: Request, res: Response) => {
             .values(
                 await withBranch({
                     name,
+                    employeeId: employeeId || null,
                     color: chosenColor,
                     defaultTruckId: defaultTruckId || null,
                     isActive: isActive !== undefined ? Boolean(isActive) : true,
@@ -82,15 +98,28 @@ export const createDriver = async (req: Request, res: Response) => {
 export const updateDriver = async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
-        const { name, color, defaultTruckId, isActive } = req.body;
+        let { name, employeeId, color, defaultTruckId, isActive } = req.body;
+
+        if (employeeId) {
+            const [emp] = await db
+                .select({ fullName: employees.fullName })
+                .from(employees)
+                .where(eq(employees.id, employeeId))
+                .limit(1);
+            if (emp) {
+                name = emp.fullName;
+            }
+        }
 
         const [updated] = await db
             .update(drivers)
             .set({
                 name,
+                employeeId: employeeId || null,
                 color: color || getRandomColor(),
                 defaultTruckId: defaultTruckId || null,
                 isActive: Boolean(isActive),
+                updatedAt: new Date(),
             })
             .where(eq(drivers.id, id))
             .returning();

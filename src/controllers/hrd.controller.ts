@@ -2,12 +2,15 @@ import { db } from "@/db";
 import {
     attendances,
     branches,
+    drivers,
     employees,
     payrolls,
     users,
     workShifts,
 } from "@/db/schemas";
 import { logAction } from "@/utils/log-helper";
+import bcrypt from "bcrypt";
+import { withBranch } from "@/helpers/branch.helper";
 import {
     attendanceClockInSchema,
     attendanceClockOutSchema,
@@ -129,6 +132,7 @@ export const getEmployees = async (req: Request, res: Response) => {
         const search = (query.search as string)?.trim() ?? "";
         const branchId = query.branchId as string;
         const department = query.department as string;
+        const positionType = query.positionType as string;
         const isActive = query.isActive !== undefined ? query.isActive === "true" : undefined;
 
         const conditions = [];
@@ -152,6 +156,10 @@ export const getEmployees = async (req: Request, res: Response) => {
             conditions.push(eq(employees.department, department));
         }
 
+        if (positionType) {
+            conditions.push(eq(employees.positionType, positionType));
+        }
+
         if (isActive !== undefined) {
             conditions.push(eq(employees.isActive, isActive));
         }
@@ -169,6 +177,7 @@ export const getEmployees = async (req: Request, res: Response) => {
                     idCardNumber: employees.idCardNumber,
                     department: employees.department,
                     position: employees.position,
+                    positionType: employees.positionType,
                     branchId: employees.branchId,
                     branchName: branches.name,
                     userId: employees.userId,
@@ -235,9 +244,13 @@ export const getEmployees = async (req: Request, res: Response) => {
 export const getAllEmployees = async (req: Request, res: Response) => {
     try {
         const branchId = req.query.branchId as string;
+        const positionType = req.query.positionType as string;
         const conditions = [eq(employees.isActive, true)];
         if (branchId) {
             conditions.push(eq(employees.branchId, branchId));
+        }
+        if (positionType) {
+            conditions.push(eq(employees.positionType, positionType));
         }
 
         const list = await db
@@ -247,6 +260,7 @@ export const getAllEmployees = async (req: Request, res: Response) => {
                 fullName: employees.fullName,
                 department: employees.department,
                 position: employees.position,
+                positionType: employees.positionType,
                 branchId: employees.branchId,
                 branchName: branches.name,
                 baseSalary: employees.baseSalary,
@@ -345,16 +359,57 @@ export const createEmployee = async (req: Request, res: Response) => {
             return res.status(409).json({ message: "NIK already registered" });
         }
 
+        const { createUser, createDriver, ...employeeFields } = parsed.data;
+        let assignedUserId = employeeFields.userId || null;
+
+        if (createUser && createUser.username && createUser.password && createUser.roleId) {
+            const [existingU] = await db
+                .select({ id: users.id })
+                .from(users)
+                .where(eq(users.username, createUser.username))
+                .limit(1);
+
+            if (existingU) {
+                return res.status(409).json({ message: "Username already exists" });
+            }
+
+            const [createdUser] = await db
+                .insert(users)
+                .values(
+                    await withBranch({
+                        username: createUser.username,
+                        displayName: employeeFields.fullName,
+                        password: await bcrypt.hash(createUser.password, 10),
+                        roleId: createUser.roleId,
+                        isActive: true,
+                    }, req)
+                )
+                .returning();
+            assignedUserId = createdUser.id;
+        }
+
         const [newEmployee] = await db
             .insert(employees)
             .values({
-                ...parsed.data,
-                userId: parsed.data.userId || null,
-                defaultShiftId: parsed.data.defaultShiftId || null,
-                endDate: parsed.data.endDate || null,
-                email: parsed.data.email || null,
+                ...employeeFields,
+                userId: assignedUserId,
+                defaultShiftId: employeeFields.defaultShiftId || null,
+                endDate: employeeFields.endDate || null,
+                email: employeeFields.email || null,
             })
             .returning();
+
+        if (createDriver) {
+            await db.insert(drivers).values(
+                await withBranch({
+                    name: newEmployee.fullName,
+                    employeeId: newEmployee.id,
+                    defaultTruckId: createDriver.defaultTruckId || null,
+                    color: createDriver.color || "#3B82F6",
+                    isActive: true,
+                }, req)
+            );
+        }
 
         logAction(req, {
             action: "insert",
@@ -409,25 +464,90 @@ export const updateEmployee = async (req: Request, res: Response) => {
             }
         }
 
+        const { createUser, createDriver, ...employeeFields } = parsed.data;
+        let assignedUserId = employeeFields.userId || existing.userId || null;
+
+        if (createUser && createUser.username && createUser.password && createUser.roleId && !existing.userId) {
+            const [existingU] = await db
+                .select({ id: users.id })
+                .from(users)
+                .where(eq(users.username, createUser.username))
+                .limit(1);
+
+            if (existingU) {
+                return res.status(409).json({ message: "Username already exists" });
+            }
+
+            const [createdUser] = await db
+                .insert(users)
+                .values(
+                    await withBranch({
+                        username: createUser.username,
+                        displayName: employeeFields.fullName,
+                        password: await bcrypt.hash(createUser.password, 10),
+                        roleId: createUser.roleId,
+                        isActive: true,
+                    }, req)
+                )
+                .returning();
+            assignedUserId = createdUser.id;
+        }
+
         const [updatedEmployee] = await db
             .update(employees)
             .set({
-                ...parsed.data,
-                userId: parsed.data.userId || null,
-                defaultShiftId: parsed.data.defaultShiftId || null,
-                endDate: parsed.data.endDate || null,
-                email: parsed.data.email || null,
+                ...employeeFields,
+                userId: assignedUserId,
+                defaultShiftId: employeeFields.defaultShiftId || null,
+                endDate: employeeFields.endDate || null,
+                email: employeeFields.email || null,
                 updatedAt: new Date(),
             })
             .where(eq(employees.id, parsed.data.id))
             .returning();
+
+        // Sync name to driver record if exists
+        await db
+            .update(drivers)
+            .set({ name: updatedEmployee.fullName })
+            .where(eq(drivers.employeeId, updatedEmployee.id));
+
+        if (createDriver) {
+            const [existingDriver] = await db
+                .select()
+                .from(drivers)
+                .where(eq(drivers.employeeId, updatedEmployee.id))
+                .limit(1);
+
+            if (existingDriver) {
+                await db
+                    .update(drivers)
+                    .set({
+                        name: updatedEmployee.fullName,
+                        defaultTruckId: createDriver.defaultTruckId || null,
+                        color: createDriver.color || existingDriver.color,
+                        updatedAt: new Date(),
+                    })
+                    .where(eq(drivers.id, existingDriver.id));
+            } else {
+                await db.insert(drivers).values(
+                    await withBranch({
+                        name: updatedEmployee.fullName,
+                        employeeId: updatedEmployee.id,
+                        defaultTruckId: createDriver.defaultTruckId || null,
+                        color: createDriver.color || "#3B82F6",
+                        isActive: true,
+                    }, req)
+                );
+            }
+        }
 
         logAction(req, {
             action: "update",
             table: "employees",
             data: updatedEmployee,
             userId: req.user?.id || "system",
-            msg: `Updated employee "${updatedEmployee.fullName}"`,
+            msg: `Updated employee "${updatedEmployee.fullName}" (${updatedEmployee.nik})`,
         });
 
         return res.status(200).json({

@@ -12,6 +12,7 @@ export const userInsertSchema = z.object({
     password: z.string().min(6).max(50),
     roleId: z.string().min(1, "Role is required"),
     branchId: z.string().uuid("Invalid branch").optional().nullable(),
+    employeeId: z.string().uuid("Invalid employee ID").optional().nullable(),
     isActive: z.boolean().default(true),
 });
 

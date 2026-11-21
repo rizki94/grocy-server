@@ -2,6 +2,7 @@ import { db } from "@/db";
 import {
     accountMappings,
     contacts,
+    employees,
     journalEntries,
     journals,
     openInvoices,
@@ -101,6 +102,17 @@ export const createSales = async (req: Request, res: Response) => {
         }
         await assertCustomerHasPriceGroup(parsed.data.contactId);
 
+        let salespersonId = parsed.data.salespersonId;
+        if (!salespersonId && parsed.data.contactId) {
+            const [cust] = await db
+                .select({ salespersonId: contacts.salespersonId })
+                .from(contacts)
+                .where(eq(contacts.id, parsed.data.contactId));
+            if (cust?.salespersonId) {
+                salespersonId = cust.salespersonId;
+            }
+        }
+
         const sales = (await isTaxEnabled())
             ? parsed.data
             : withoutTax(parsed.data);
@@ -109,6 +121,7 @@ export const createSales = async (req: Request, res: Response) => {
             .values(
                 await withBranch({
                     ...sales,
+                    salespersonId: salespersonId || null,
                     invoice,
                     type: "sales",
                     status: "order",
@@ -561,6 +574,10 @@ export const getPaginatedSales = async (req: Request, res: Response) => {
                       sql`LOWER(${contacts.name})`,
                       `%${search.toLowerCase()}%`,
                   ),
+                  like(
+                      sql`LOWER(${employees.fullName})`,
+                      `%${search.toLowerCase()}%`,
+                  ),
               )
             : undefined;
 
@@ -600,9 +617,12 @@ export const getPaginatedSales = async (req: Request, res: Response) => {
                     totalAmount: transactions.totalAmount,
                     date: transactions.date,
                     parentId: transactions.parentId,
+                    salespersonId: transactions.salespersonId,
+                    salespersonName: employees.fullName,
                 })
                 .from(transactions)
                 .innerJoin(contacts, eq(contacts.id, transactions.contactId))
+                .leftJoin(employees, eq(transactions.salespersonId, employees.id))
                 .where(
                     and(
                         eq(transactions.type, "sales"),
@@ -619,6 +639,7 @@ export const getPaginatedSales = async (req: Request, res: Response) => {
                 .select({ count: sql<number>`count(*)` })
                 .from(transactions)
                 .innerJoin(contacts, eq(contacts.id, transactions.contactId))
+                .leftJoin(employees, eq(transactions.salespersonId, employees.id))
                 .where(
                     and(
                         eq(transactions.type, "sales"),
@@ -634,6 +655,7 @@ export const getPaginatedSales = async (req: Request, res: Response) => {
                 })
                 .from(transactions)
                 .innerJoin(contacts, eq(contacts.id, transactions.contactId))
+                .leftJoin(employees, eq(transactions.salespersonId, employees.id))
                 .where(
                     and(
                         eq(transactions.type, "sales"),

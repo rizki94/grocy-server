@@ -2,6 +2,7 @@ import { db } from "@/db";
 import {
     accountMappings,
     contacts,
+    employees,
     journalEntries,
     journals,
     openInvoices,
@@ -101,6 +102,17 @@ export const createPurchase = async (req: Request, res: Response) => {
     const invoice = await generateInvoice("purchase", branchCode);
 
     try {
+        let purchasingPicId = parsed.data.purchasingPicId;
+        if (!purchasingPicId && req.user?.id) {
+            const [emp] = await db
+                .select({ id: employees.id })
+                .from(employees)
+                .where(eq(employees.userId, req.user.id));
+            if (emp?.id) {
+                purchasingPicId = emp.id;
+            }
+        }
+
         const purchase = (await isTaxEnabled())
             ? parsed.data
             : withoutTax(parsed.data);
@@ -110,6 +122,7 @@ export const createPurchase = async (req: Request, res: Response) => {
                 await withBranch(
                     {
                         ...purchase,
+                        purchasingPicId: purchasingPicId || null,
                         invoice,
                         type: "purchase",
                         status: purchase.status || "order",
@@ -448,6 +461,10 @@ export const getPaginatedPurchases = async (req: Request, res: Response) => {
                       sql`LOWER(${contacts.name})`,
                       `%${search.toLowerCase()}%`,
                   ),
+                  like(
+                      sql`LOWER(${employees.fullName})`,
+                      `%${search.toLowerCase()}%`,
+                  ),
               )
             : undefined;
 
@@ -487,9 +504,12 @@ export const getPaginatedPurchases = async (req: Request, res: Response) => {
                     totalAmount: transactions.totalAmount,
                     date: transactions.date,
                     parentId: transactions.parentId,
+                    purchasingPicId: transactions.purchasingPicId,
+                    purchasingPicName: employees.fullName,
                 })
                 .from(transactions)
                 .innerJoin(contacts, eq(contacts.id, transactions.contactId))
+                .leftJoin(employees, eq(transactions.purchasingPicId, employees.id))
                 .where(
                     and(
                         eq(transactions.type, "purchase"),
@@ -506,6 +526,7 @@ export const getPaginatedPurchases = async (req: Request, res: Response) => {
                 .select({ count: sql<number>`count(*)` })
                 .from(transactions)
                 .innerJoin(contacts, eq(contacts.id, transactions.contactId))
+                .leftJoin(employees, eq(transactions.purchasingPicId, employees.id))
                 .where(
                     and(
                         eq(transactions.type, "purchase"),
@@ -521,6 +542,7 @@ export const getPaginatedPurchases = async (req: Request, res: Response) => {
                 })
                 .from(transactions)
                 .innerJoin(contacts, eq(contacts.id, transactions.contactId))
+                .leftJoin(employees, eq(transactions.purchasingPicId, employees.id))
                 .where(
                     and(
                         eq(transactions.type, "purchase"),

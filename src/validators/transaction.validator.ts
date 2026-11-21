@@ -16,6 +16,8 @@ export const transactionInsertSchema = z.object({
     totalTax: z.number(),
     status: z.enum(transactionStatuses),
     parentId: z.string().nullable().optional(),
+    salespersonId: z.string().uuid().nullable().optional(),
+    purchasingPicId: z.string().uuid().nullable().optional(),
 });
 
 const transactionDetailBaseSchema = z.object({
