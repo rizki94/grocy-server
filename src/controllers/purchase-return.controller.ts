@@ -739,9 +739,9 @@ export const deletePurchaseReturn = async (req: Request, res: Response) => {
             return res.status(404).json({ message: "Purchase return not found" });
         }
 
-        if (purchaseReturn.status === "posted" || purchaseReturn.status === "paid") {
+        if (purchaseReturn.status !== "draft" && purchaseReturn.status !== "order") {
             return res.status(400).json({
-                message: "Retur pembelian yang sudah dipost tidak dapat dihapus",
+                message: "Hanya retur pembelian dengan status draft atau order yang dapat dihapus",
             });
         }
 

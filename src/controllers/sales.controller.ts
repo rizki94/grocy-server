@@ -1060,9 +1060,9 @@ export const deleteSales = async (req: Request, res: Response) => {
             return res.status(404).json({ message: "Sales not found" });
         }
 
-        if (sales.status === "posted") {
+        if (sales.status !== "draft" && sales.status !== "order") {
             return res.status(400).json({
-                message: "Transaksi penjualan yang sudah dipost tidak dapat dihapus",
+                message: "Hanya transaksi penjualan dengan status draft atau order yang dapat dihapus",
             });
         }
 

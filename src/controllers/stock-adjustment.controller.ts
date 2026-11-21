@@ -655,9 +655,9 @@ export const deleteAdjustment = async (req: Request, res: Response) => {
             return res.status(404).json({ message: "Stock adjustment not found" });
         }
 
-        if (adjustment.status === "posted") {
+        if (adjustment.status !== "draft" && adjustment.status !== "order") {
             return res.status(400).json({
-                message: "Penyesuaian stok yang sudah dipost tidak dapat dihapus",
+                message: "Hanya penyesuaian stok dengan status draft atau order yang dapat dihapus",
             });
         }
 
