@@ -46,14 +46,6 @@ export async function getDataIntegrityAudit(req: Request, res: Response) {
     try {
         const issues: AuditIssue[] = [];
 
-        // Check global inventory tracking setting
-        const [globalSettings] = await db
-            .select()
-            .from(settings)
-            .where(eq(settings.id, "global"))
-            .limit(1);
-        const trackingEnabled = globalSettings ? globalSettings.enableInventoryTracking : true;
-
         // -------------------------------------------------------------
         // 1. KESEIMBANGAN JURNAL (Debit vs Kredit)
         // -------------------------------------------------------------
@@ -239,36 +231,59 @@ export async function getDataIntegrityAudit(req: Request, res: Response) {
             });
         }
 
-        // b. Transaksi Posted Tanpa Mutasi Stok
-        if (trackingEnabled) {
-            const postedWithoutMovementsRes = await db.execute(sql`
-                SELECT t.id, t.type, t.invoice, t.date, COUNT(td.id) as item_count
-                FROM transactions t
-                JOIN transaction_details td ON td.transaction_id = t.id
-                JOIN products p ON p.id = td.product_id
-                LEFT JOIN stock_movements sm ON sm.transaction_id = t.id
-                WHERE t.status = 'posted'
-                  AND t.type IN ('sales', 'purchase', 'sales_return', 'purchase_return', 'adjustment', 'transfer_stock')
-                  AND sm.id IS NULL
-                GROUP BY t.id, t.type, t.invoice, t.date
-                ORDER BY t.date DESC;
-            `);
+        // b. Transaksi Posted Tanpa Mutasi Stok atau Mutasi Tidak Lengkap
+        const postedWithoutMovementsRes = await db.execute(sql`
+            SELECT 
+                t.id, 
+                t.type, 
+                t.invoice, 
+                t.date,
+                COUNT(DISTINCT td.id) as expected_items,
+                COUNT(DISTINCT sm.id) as actual_movements,
+                COALESCE(SUM(td.qty * td.base_ratio), 0)::numeric as expected_qty,
+                COALESCE(SUM(ABS(sm.quantity)), 0)::numeric as actual_qty
+            FROM transactions t
+            JOIN transaction_details td ON td.transaction_id = t.id
+            LEFT JOIN stock_movements sm ON sm.transaction_id = t.id
+            WHERE t.status = 'posted'
+              AND t.type IN ('sales', 'purchase', 'sales_return', 'purchase_return', 'adjustment', 'transfer_stock')
+            GROUP BY t.id, t.type, t.invoice, t.date
+            HAVING COUNT(DISTINCT sm.id) = 0 
+                OR COUNT(DISTINCT sm.id) < COUNT(DISTINCT td.id)
+                OR ABS(COALESCE(SUM(td.qty * td.base_ratio), 0) - COALESCE(SUM(ABS(sm.quantity)), 0)) > 0.01
+            ORDER BY t.date DESC;
+        `);
 
-            for (const row of postedWithoutMovementsRes.rows as any[]) {
-                issues.push({
-                    id: row.id,
-                    category: "stock_integrity",
-                    type: "missing_stock_movement",
-                    reference: row.invoice,
-                    date: row.date,
-                    description: `Transaksi posted #${row.invoice} berisi ${row.item_count} barang tetapi tidak memiliki catatan mutasi stok`,
-                    expectedValue: `${row.item_count} items`,
-                    actualValue: "0 movements",
-                    canAutoFix: true,
-                    fixAction: "recreate_stock_movements",
-                    details: { transactionId: row.id, type: row.type },
-                });
+        for (const row of postedWithoutMovementsRes.rows as any[]) {
+            const actualMov = Number(row.actual_movements || 0);
+            const expItems = Number(row.expected_items || 0);
+            const expQty = Number(row.expected_qty || 0);
+            const actQty = Number(row.actual_qty || 0);
+            const diffQty = Math.abs(expQty - actQty);
+
+            let desc = "";
+            if (actualMov === 0) {
+                desc = `Transaksi posted #${row.invoice} (${row.type.toUpperCase()}) berisi ${expItems} barang tetapi tidak memiliki catatan mutasi stok`;
+            } else if (actualMov < expItems) {
+                desc = `Transaksi posted #${row.invoice} (${row.type.toUpperCase()}) mutasi stok tidak lengkap (${actualMov} dari ${expItems} barang tercatat)`;
+            } else {
+                desc = `Transaksi posted #${row.invoice} (${row.type.toUpperCase()}) kuantitas barang (${expQty}) tidak sesuai dengan mutasi stok (${actQty})`;
             }
+
+            issues.push({
+                id: row.id,
+                category: "stock_integrity",
+                type: "missing_stock_movement",
+                reference: row.invoice,
+                date: row.date,
+                description: desc,
+                expectedValue: `${expQty} unit (${expItems} item)`,
+                actualValue: `${actQty} unit (${actualMov} item)`,
+                difference: diffQty,
+                canAutoFix: true,
+                fixAction: "recreate_stock_movements",
+                details: { transactionId: row.id, type: row.type },
+            });
         }
 
         // c. Stok Negatif (Stok Minus)
@@ -514,9 +529,111 @@ export async function reconcileDataIntegrity(req: Request, res: Response) {
             }
 
             // ---------------------------------------------------------
+            // ACTION: RECREATE MISSING STOCK MOVEMENTS
+            // (Recreate movements FIRST so stock balances can be recalculated from full movements)
+            // ---------------------------------------------------------
+            if (action === "recreate-stock-movements" || action === "fix-all" || fixType === "recreate_stock_movements") {
+                const targetTrxQuery = targetId
+                    ? sql`SELECT t.* FROM transactions t WHERE t.id = ${targetId} AND t.status = 'posted'`
+                    : sql`
+                        SELECT t.* 
+                        FROM transactions t
+                        JOIN transaction_details td ON td.transaction_id = t.id
+                        LEFT JOIN stock_movements sm ON sm.transaction_id = t.id
+                        WHERE t.status = 'posted'
+                          AND t.type IN ('sales', 'purchase', 'sales_return', 'purchase_return', 'adjustment', 'transfer_stock')
+                        GROUP BY t.id
+                        HAVING COUNT(DISTINCT sm.id) = 0 
+                            OR COUNT(DISTINCT sm.id) < COUNT(DISTINCT td.id)
+                            OR ABS(COALESCE(SUM(td.qty * td.base_ratio), 0) - COALESCE(SUM(ABS(sm.quantity)), 0)) > 0.01
+                    `;
+
+                const targetTrx = await tx.execute(targetTrxQuery);
+
+                for (const trx of targetTrx.rows as any[]) {
+                    try {
+                        const trxItems = await tx
+                            .select()
+                            .from(transactionDetails)
+                            .where(eq(transactionDetails.transactionId, trx.id));
+
+                        if (trxItems.length > 0) {
+                            await tx.delete(stockMovements).where(eq(stockMovements.transactionId, trx.id));
+
+                            await updateStockForTransaction(
+                                trx.id,
+                                trx.type,
+                                trxItems.map((d: any) => ({
+                                    productId: d.productId,
+                                    warehouseId: d.warehouseId,
+                                    qty: Number(d.qty),
+                                    baseRatio: Number(d.baseRatio || 1),
+                                    movementType: Number(d.movementType),
+                                    unitCost: Number(d.unitCost || 0),
+                                    batchNumber: d.batchNumber,
+                                    expiryDate: d.expiryDate,
+                                    serialNumbers: d.serialNumbers,
+                                })),
+                                tx,
+                            );
+                            fixedCount++;
+                            reportLogs.push(`Berhasil memulihkan mutasi stok untuk transaksi #${trx.invoice}.`);
+                        }
+                    } catch (smErr: any) {
+                        logger.warn({ err: smErr }, `Failed to recreate movements for ${trx.invoice}`);
+                    }
+                }
+            }
+
+            // ---------------------------------------------------------
             // ACTION: RECALCULATE STOCK BALANCES
             // ---------------------------------------------------------
             if (action === "recalculate-stocks" || action === "fix-all" || fixType === "recalculate_stock") {
+                // If fixing a specific stock, ensure any posted transactions missing movements for this product are restored first!
+                if (targetId && fixType === "recalculate_stock") {
+                    const missingForProduct = await tx.execute(sql`
+                        SELECT DISTINCT t.id, t.type, t.invoice
+                        FROM transactions t
+                        JOIN transaction_details td ON td.transaction_id = t.id
+                        JOIN stocks s ON s.product_id = td.product_id
+                        LEFT JOIN stock_movements sm ON sm.transaction_id = t.id
+                        WHERE s.id = ${targetId}
+                          AND t.status = 'posted'
+                          AND t.type IN ('sales', 'purchase', 'sales_return', 'purchase_return', 'adjustment', 'transfer_stock')
+                        GROUP BY t.id, t.type, t.invoice
+                        HAVING COUNT(DISTINCT sm.id) = 0 OR COUNT(DISTINCT sm.id) < COUNT(DISTINCT td.id);
+                    `);
+
+                    for (const mTrx of missingForProduct.rows as any[]) {
+                        const trxItems = await tx
+                            .select()
+                            .from(transactionDetails)
+                            .where(eq(transactionDetails.transactionId, mTrx.id));
+
+                        if (trxItems.length > 0) {
+                            await tx.delete(stockMovements).where(eq(stockMovements.transactionId, mTrx.id));
+                            await updateStockForTransaction(
+                                mTrx.id,
+                                mTrx.type,
+                                trxItems.map((d: any) => ({
+                                    productId: d.productId,
+                                    warehouseId: d.warehouseId,
+                                    qty: Number(d.qty),
+                                    baseRatio: Number(d.baseRatio || 1),
+                                    movementType: Number(d.movementType),
+                                    unitCost: Number(d.unitCost || 0),
+                                    batchNumber: d.batchNumber,
+                                    expiryDate: d.expiryDate,
+                                    serialNumbers: d.serialNumbers,
+                                })),
+                                tx,
+                            );
+                            fixedCount++;
+                            reportLogs.push(`Memulihkan mutasi transaksi #${mTrx.invoice} sebelum menghitung ulang stok.`);
+                        }
+                    }
+                }
+
                 const whereClause = targetId
                     ? sql`WHERE s.id = ${targetId}`
                     : sql``;
@@ -723,59 +840,6 @@ export async function reconcileDataIntegrity(req: Request, res: Response) {
                         reportLogs.push(`Berhasil menerbitkan ulang jurnal #${journalInvoice} untuk transaksi #${trx.invoice}.`);
                     } catch (genErr: any) {
                         logger.warn({ err: genErr }, `Failed to regenerate journal for ${trx.invoice}`);
-                    }
-                }
-            }
-
-            // ---------------------------------------------------------
-            // ACTION: RECREATE MISSING STOCK MOVEMENTS
-            // ---------------------------------------------------------
-            if (action === "fix-all" || fixType === "recreate_stock_movements") {
-                const targetTrxQuery = targetId
-                    ? sql`SELECT t.* FROM transactions t WHERE t.id = ${targetId} AND t.status = 'posted'`
-                    : sql`
-                        SELECT t.* 
-                        FROM transactions t
-                        JOIN transaction_details td ON td.transaction_id = t.id
-                        JOIN products p ON p.id = td.product_id
-                        LEFT JOIN stock_movements sm ON sm.transaction_id = t.id
-                        WHERE t.status = 'posted'
-                          AND t.type IN ('sales', 'purchase', 'sales_return', 'purchase_return', 'adjustment', 'transfer_stock')
-                          AND sm.id IS NULL
-                        GROUP BY t.id
-                    `;
-
-                const targetTrx = await tx.execute(targetTrxQuery);
-
-                for (const trx of targetTrx.rows as any[]) {
-                    try {
-                        const trxItems = await tx
-                            .select()
-                            .from(transactionDetails)
-                            .where(eq(transactionDetails.transactionId, trx.id));
-
-                        if (trxItems.length > 0) {
-                            await updateStockForTransaction(
-                                trx.id,
-                                trx.type,
-                                trxItems.map((d: any) => ({
-                                    productId: d.productId,
-                                    warehouseId: d.warehouseId,
-                                    qty: Number(d.qty),
-                                    baseRatio: Number(d.baseRatio || 1),
-                                    movementType: Number(d.movementType),
-                                    unitCost: Number(d.unitCost || 0),
-                                    batchNumber: d.batchNumber,
-                                    expiryDate: d.expiryDate,
-                                    serialNumbers: d.serialNumbers,
-                                })),
-                                tx,
-                            );
-                            fixedCount++;
-                            reportLogs.push(`Berhasil mencatatkan mutasi stok untuk transaksi #${trx.invoice}.`);
-                        }
-                    } catch (smErr: any) {
-                        logger.warn({ err: smErr }, `Failed to recreate movements for ${trx.invoice}`);
                     }
                 }
             }
