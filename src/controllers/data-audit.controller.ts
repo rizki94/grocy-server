@@ -576,6 +576,34 @@ export async function reconcileDataIntegrity(req: Request, res: Response) {
                                 })),
                                 tx,
                             );
+
+                            // Recalculate and calibrate stocks.qty directly from movements so it never doubles
+                            const productIds = Array.from(new Set(trxItems.map((d: any) => d.productId)));
+                            if (productIds.length > 0) {
+                                await tx.execute(sql`
+                                    WITH calculated AS (
+                                        SELECT 
+                                            s.id as stock_id,
+                                            COALESCE(SUM(
+                                                CASE 
+                                                    WHEN sm.type = 'IN' THEN ABS(sm.quantity)
+                                                    WHEN sm.type = 'OUT' THEN -ABS(sm.quantity)
+                                                    ELSE sm.quantity
+                                                END
+                                            ), 0) as calc_qty
+                                        FROM stocks s
+                                        LEFT JOIN stock_movements sm ON sm.stock_id = s.id
+                                        WHERE s.product_id IN ${productIds}
+                                        GROUP BY s.id
+                                    )
+                                    UPDATE stocks
+                                    SET qty = calculated.calc_qty
+                                    FROM calculated
+                                    WHERE stocks.id = calculated.stock_id
+                                      AND ABS(stocks.qty - calculated.calc_qty) > 0.001;
+                                `);
+                            }
+
                             fixedCount++;
                             reportLogs.push(`Berhasil memulihkan mutasi stok untuk transaksi #${trx.invoice}.`);
                         }
