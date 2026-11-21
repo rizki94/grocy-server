@@ -77,7 +77,7 @@ export async function updateStockForTransaction(
             }
 
             const isIn = detail.movementType === 1;
-            const isOut = detail.movementType === -1;
+            const isOut = detail.movementType === -1 || detail.movementType === 2;
 
             if (isIn) {
                 const baseRatio = detail.baseRatio && Number(detail.baseRatio) > 0 ? Number(detail.baseRatio) : 1;
