@@ -100,6 +100,8 @@ export const ALL_PERMISSIONS: PermissionDef[] = [
     { code: "accounting.bank_reconciliation.create", description: "Create Bank Reconciliation", group: "accounting" },
     { code: "accounting.bank_reconciliation.reconcile", description: "Reconcile Bank Statements", group: "accounting" },
     { code: "accounting.bank_reconciliation.cancel", description: "Cancel Bank Reconciliation", group: "accounting" },
+    { code: "accounting.audit.view", description: "View Data Integrity Audit", group: "accounting" },
+    { code: "accounting.audit.reconcile", description: "Reconcile Data Integrity", group: "accounting" },
 
     // Reports
     { code: "report.profit_loss.view", description: "View Profit & Loss", group: "report" },

@@ -53,6 +53,7 @@ import bankReconciliationRouter from "./routes/bank-reconciliation.route";
 import hrdRouter from "./routes/hrd.route";
 import crmRouter from "./routes/crm.route";
 import tenantRouter from "./routes/tenant.route";
+import dataAuditRouter from "./routes/data-audit.route";
 
 import { refresh } from "./controllers/auth.controller";
 
@@ -118,5 +119,6 @@ route.use("/incomes", incomeRouter);
 route.use("/period-closing", periodClosingRouter);
 route.use("/stock-opnames", stockOpnameRouter);
 route.use("/bank-reconciliations", bankReconciliationRouter);
+route.use("/data-audit", dataAuditRouter);
 route.use("/hrd", hrdRouter);
 route.use("/crm", crmRouter);
