@@ -3,6 +3,8 @@ import jwt from "jsonwebtoken";
 import { getClientIp, type SessionMeta } from "@/helpers/session.helper";
 
 const ACTIVITY_UPDATE_INTERVAL_MS = 30_000;
+const INACTIVITY_LIMIT_MS =
+    (Number(process.env.SESSION_INACTIVITY_HOURS) || 12) * 60 * 60 * 1000;
 
 export function isAuthenticated(
     req: Request,
@@ -20,6 +22,18 @@ export function isAuthenticated(
                 ? new Date(sessAny.meta.lastActivityAt).getTime()
                 : 0;
 
+            // Inactivity Guard: If session was inactive for longer than INACTIVITY_LIMIT_MS, terminate it
+            if (lastActivityMs > 0 && now - lastActivityMs > INACTIVITY_LIMIT_MS) {
+                req.logout(() => {});
+                req.session.destroy(() => {});
+                res.clearCookie("connect.sid");
+                return res.status(401).json({
+                    code: "SESSION_EXPIRED_INACTIVITY",
+                    message: "Sesi telah berakhir karena tidak ada aktivitas. Silakan login kembali.",
+                });
+            }
+
+            // Update activity meta throttled to every 30 seconds
             if (!sessAny.meta || now - lastActivityMs > ACTIVITY_UPDATE_INTERVAL_MS) {
                 const nowIso = new Date(now).toISOString();
                 const reqUser = req.user as { id?: string; username?: string } | undefined;
@@ -49,7 +63,7 @@ export function isAuthenticated(
                 process.env.JWT_SECRET || "secret"
             ) as any;
             
-            // Minimal user object, you might want to fetch full details from DB
+            // Minimal user object
             req.user = decoded;
             return next();
         } catch (err) {
