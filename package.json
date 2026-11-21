@@ -9,6 +9,7 @@
         "seed": "tsx src/db/seeds/index.ts",
         "seed:demo": "tsx src/db/seeds/004_seed_demo_data.ts",
         "seed:permissions": "tsx src/scripts/seed-permissions.ts",
+        "db:sync:all": "tsx src/scripts/sync-all-tenants.ts",
         "reset": "tsx src/db/reset-db.ts",
         "reset:seed": "tsx src/db/reset-db.ts && tsx src/db/seeds/index.ts",
         "migrate:stage1": "tsx src/scripts/migrate-stage1-master.ts",
