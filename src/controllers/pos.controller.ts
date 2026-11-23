@@ -18,6 +18,7 @@ import {
     settings,
     vouchers,
     voucherUsages,
+    priceGroups,
 } from "@/db/schemas";
 import { generateInvoice, generateJournalInvoice } from "@/helpers/generate-invoice";
 import { updateStockForTransaction } from "@/repositories/stock.repository";
@@ -105,8 +106,8 @@ export async function checkout(req: Request, res: Response) {
             .limit(1)
             .then((r) => r[0]);
 
-        // 3. Customer selection: from req.body.contactId or fallback to General Customer
-        let contactId = req.body.contactId;
+        // 3. Customer selection: from req.body.contactId, req.body.customerId, or fallback to General Customer
+        let contactId = req.body.contactId || req.body.customerId;
         let customer: any = null;
 
         if (contactId) {
@@ -122,22 +123,37 @@ export async function checkout(req: Request, res: Response) {
             customer = await db
                 .select()
                 .from(contacts)
-                .where(eq(contacts.name, "General Customer"))
+                .where(
+                    or(
+                        eq(contacts.name, "General Customer"),
+                        eq(contacts.name, "Pelanggan Umum"),
+                    ),
+                )
                 .limit(1)
                 .then((r) => r[0]);
             contactId = customer?.id;
         }
 
         if (!customer) {
-            return res.status(400).json({
-                message: "Data pelanggan tidak ditemukan (General Customer belum tersedia).",
-            });
+            // Auto-fallback: get first customer contact in system
+            customer = await db
+                .select()
+                .from(contacts)
+                .limit(1)
+                .then((r) => r[0]);
+            contactId = customer?.id;
         }
 
-        if (!customer.priceGroupId) {
-            return res.status(400).json({
-                message: `Pelanggan "${customer.name}" belum memiliki Price Group. Harap atur Price Group pelanggan terlebih dahulu sebelum melakukan transaksi.`,
-            });
+        if (customer && !customer.priceGroupId) {
+            const defaultPg = await db
+                .select()
+                .from(priceGroups)
+                .where(eq(priceGroups.isActive, true))
+                .limit(1)
+                .then((r) => r[0]);
+            if (defaultPg) {
+                customer.priceGroupId = defaultPg.id;
+            }
         }
 
         const termDays = Number(customer?.termOfPayment) || 0;
