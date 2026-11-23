@@ -1730,7 +1730,6 @@ export const getMyTodayAttendance = async (req: Request, res: Response) => {
                 nik: emp.nik,
                 department: emp.department,
                 position: emp.position,
-                photoUrl: emp.photoUrl,
             },
             shift: shift
                 ? {
