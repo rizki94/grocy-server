@@ -211,70 +211,78 @@ export const loginNative = async (
                     .json({ status: 401, message: info?.message || "Invalid credentials" });
             }
 
-            const token = jwt.sign(
-                {
-                    id: user.id,
-                    username: user.username,
-                    roleId: user.roleId,
-                    isActive: user.isActive,
-                },
-                process.env.JWT_SECRET || "secret",
-                { expiresIn: (process.env.JWT_EXPIRES_IN as any) || "7d" }
-            );
+            try {
+                const token = jwt.sign(
+                    {
+                        id: user.id,
+                        username: user.username,
+                        roleId: user.roleId,
+                        isActive: user.isActive,
+                    },
+                    process.env.JWT_SECRET || "secret",
+                    { expiresIn: (process.env.JWT_EXPIRES_IN as any) || "7d" }
+                );
 
-            // Fetch permissions for the response
-            let roleName = "user";
-            let isSuperAdmin = false;
-            if (user.roleId) {
-                const [r] = await db
-                    .select()
-                    .from(roles)
-                    .where(eq(roles.id, user.roleId))
-                    .limit(1);
-                if (r) {
-                    roleName = r.name;
-                    isSuperAdmin = r.name === "super_admin";
+                // Fetch permissions for the response
+                let roleName = "user";
+                let isSuperAdmin = false;
+                if (user.roleId) {
+                    const [r] = await db
+                        .select()
+                        .from(roles)
+                        .where(eq(roles.id, user.roleId))
+                        .limit(1);
+                    if (r) {
+                        roleName = r.name;
+                        isSuperAdmin = r.name === "super_admin";
+                    }
                 }
+
+                let allowedPermissions: string[] = [];
+                if (isSuperAdmin) {
+                    const allPerms = await db
+                        .select({ code: permissions.code })
+                        .from(permissions);
+                    const dbCodes = allPerms.map((p) => p.code);
+                    allowedPermissions = Array.from(new Set([...dbCodes, ...ALL_PERMISSION_CODES]));
+                } else if (user.roleId) {
+                    const rows = await db
+                        .select({
+                            code: permissions.code,
+                            hasPermission: rolePermissions.hasPermission,
+                        })
+                        .from(rolePermissions)
+                        .innerJoin(
+                            permissions,
+                            eq(rolePermissions.permissionId, permissions.id)
+                        )
+                        .where(eq(rolePermissions.roleId, user.roleId));
+
+                    allowedPermissions = rows
+                        .filter((row) => row.hasPermission)
+                        .map((row) => row.code);
+                }
+
+                return res.status(200).json({
+                    status: 200,
+                    message: "Login success",
+                    token,
+                    user: {
+                        id: user.id,
+                        username: user.username,
+                        roleId: user.roleId,
+                        role: roleName,
+                        isSuperAdmin,
+                    },
+                    permission: allowedPermissions,
+                });
+            } catch (authErr: any) {
+                console.error("loginNative processing error:", authErr);
+                return res.status(500).json({
+                    status: 500,
+                    message: authErr.message || "Internal server error during login processing",
+                });
             }
-
-            let allowedPermissions: string[] = [];
-            if (isSuperAdmin) {
-                const allPerms = await db
-                    .select({ code: permissions.code })
-                    .from(permissions);
-                const dbCodes = allPerms.map((p) => p.code);
-                allowedPermissions = Array.from(new Set([...dbCodes, ...ALL_PERMISSION_CODES]));
-            } else {
-                const rows = await db
-                    .select({
-                        code: permissions.code,
-                        hasPermission: rolePermissions.hasPermission,
-                    })
-                    .from(rolePermissions)
-                    .innerJoin(
-                        permissions,
-                        eq(rolePermissions.permissionId, permissions.id)
-                    )
-                    .where(eq(rolePermissions.roleId, user.roleId));
-
-                allowedPermissions = rows
-                    .filter((row) => row.hasPermission)
-                    .map((row) => row.code);
-            }
-
-            return res.status(200).json({
-                status: 200,
-                message: "Login success",
-                token,
-                user: {
-                    id: user.id,
-                    username: user.username,
-                    roleId: user.roleId,
-                    role: roleName,
-                    isSuperAdmin,
-                },
-                permission: allowedPermissions,
-            });
         }
     )(req, res, next);
 };
@@ -318,7 +326,7 @@ export const refresh = async (req: Request, res: Response) => {
                 .from(permissions);
             const dbCodes = allPerms.map((p) => p.code);
             allowedPermissions = Array.from(new Set([...dbCodes, ...ALL_PERMISSION_CODES]));
-        } else {
+        } else if (user.roleId) {
             const rows = await db
                 .select({
                     code: permissions.code,
