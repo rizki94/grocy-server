@@ -1773,6 +1773,70 @@ export const mobileClockIn = async (req: Request, res: Response) => {
     }
 };
 
+async function resolveUserEmployee(userId: string) {
+    let [emp] = await db
+        .select()
+        .from(employees)
+        .where(and(eq(employees.userId, userId), eq(employees.isActive, true)))
+        .limit(1);
+
+    if (emp) return emp;
+
+    const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+    if (!user) return null;
+
+    const nameToMatch = user.displayName || user.username;
+    const [matched] = await db
+        .select()
+        .from(employees)
+        .where(
+            and(
+                eq(employees.isActive, true),
+                or(
+                    like(employees.fullName, `%${user.username}%`),
+                    like(employees.fullName, `%${nameToMatch}%`)
+                )
+            )
+        )
+        .limit(1);
+
+    if (matched) {
+        await db.update(employees).set({ userId }).where(eq(employees.id, matched.id));
+        return { ...matched, userId };
+    }
+
+    // Auto-provision employee profile for administrator
+    const [defaultShift] = await db
+        .select()
+        .from(workShifts)
+        .where(eq(workShifts.isActive, true))
+        .limit(1);
+
+    const nowStr = new Date().toISOString().slice(0, 10);
+    const nik = `ADM-${user.username.slice(0, 6).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`;
+
+    const [created] = await db
+        .insert(employees)
+        .values({
+            nik,
+            fullName: user.displayName || user.username,
+            department: "Manajemen",
+            position: "Administrator",
+            positionType: "management",
+            branchId: user.branchId,
+            userId: user.id,
+            defaultShiftId: defaultShift ? defaultShift.id : null,
+            employmentStatus: "permanent",
+            joinDate: nowStr,
+            baseSalary: 0,
+            dailyAllowance: 0,
+            isActive: true,
+        })
+        .returning();
+
+    return created;
+}
+
 export const getMyTodayAttendance = async (req: Request, res: Response) => {
     const userId = req.user?.id;
     if (!userId) {
@@ -1780,11 +1844,7 @@ export const getMyTodayAttendance = async (req: Request, res: Response) => {
     }
 
     try {
-        const [emp] = await db
-            .select()
-            .from(employees)
-            .where(and(eq(employees.userId, userId), eq(employees.isActive, true)))
-            .limit(1);
+        const emp = await resolveUserEmployee(userId);
 
         if (!emp) {
             return res.status(404).json({
@@ -1862,11 +1922,7 @@ export const myClockIn = async (req: Request, res: Response) => {
     }
 
     try {
-        const [emp] = await db
-            .select()
-            .from(employees)
-            .where(and(eq(employees.userId, userId), eq(employees.isActive, true)))
-            .limit(1);
+        const emp = await resolveUserEmployee(userId);
 
         if (!emp) {
             return res.status(404).json({ message: "Profil karyawan aktif tidak ditemukan untuk akun ini" });
