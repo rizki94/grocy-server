@@ -300,7 +300,9 @@ export async function openSession(req: Request, res: Response) {
         }
 
         let openingBalance = 0;
-        if (user?.cashGlAccountId) {
+        if (req.body.openingBalance !== undefined && req.body.openingBalance !== null) {
+            openingBalance = Number(req.body.openingBalance) || 0;
+        } else if (user?.cashGlAccountId) {
             openingBalance = await getAccountBalance(user.cashGlAccountId);
         }
 
