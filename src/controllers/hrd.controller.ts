@@ -1671,3 +1671,248 @@ export const mobileClockIn = async (req: Request, res: Response) => {
     }
 };
 
+export const getMyTodayAttendance = async (req: Request, res: Response) => {
+    const userId = req.user?.id;
+    if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    try {
+        const [emp] = await db
+            .select()
+            .from(employees)
+            .where(and(eq(employees.userId, userId), eq(employees.isActive, true)))
+            .limit(1);
+
+        if (!emp) {
+            return res.status(404).json({
+                message: "Akun Anda belum terhubung dengan profil karyawan di sistem HRD.",
+            });
+        }
+
+        const now = new Date();
+        const dateStr = now.toISOString().slice(0, 10);
+
+        let shift = null;
+        if (emp.defaultShiftId) {
+            const [s] = await db
+                .select()
+                .from(workShifts)
+                .where(eq(workShifts.id, emp.defaultShiftId))
+                .limit(1);
+            shift = s;
+        }
+
+        if (!shift) {
+            const [defaultShift] = await db
+                .select()
+                .from(workShifts)
+                .where(eq(workShifts.isActive, true))
+                .limit(1);
+            shift = defaultShift;
+        }
+
+        const [existing] = await db
+            .select()
+            .from(attendances)
+            .where(
+                and(
+                    eq(attendances.employeeId, emp.id),
+                    eq(attendances.date, dateStr),
+                ),
+            )
+            .limit(1);
+
+        return res.status(200).json({
+            employee: {
+                id: emp.id,
+                fullName: emp.fullName,
+                nik: emp.nik,
+                department: emp.department,
+                position: emp.position,
+                photoUrl: emp.photoUrl,
+            },
+            shift: shift
+                ? {
+                      id: shift.id,
+                      name: shift.name,
+                      startTime: shift.startTime,
+                      endTime: shift.endTime,
+                      gracePeriodMinutes: shift.gracePeriodMinutes,
+                  }
+                : null,
+            attendance: existing || null,
+        });
+    } catch (err: any) {
+        console.error("Error in getMyTodayAttendance:", err);
+        return res.status(500).json({ message: "Gagal memuat status absensi hari ini" });
+    }
+};
+
+export const myClockIn = async (req: Request, res: Response) => {
+    const userId = req.user?.id;
+    if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const { type, photo, latitude, longitude, location, notes } = req.body;
+    if (!type || !["clock-in", "clock-out"].includes(type)) {
+        return res.status(400).json({ message: "Tipe absensi (clock-in / clock-out) wajib diisi" });
+    }
+
+    try {
+        const [emp] = await db
+            .select()
+            .from(employees)
+            .where(and(eq(employees.userId, userId), eq(employees.isActive, true)))
+            .limit(1);
+
+        if (!emp) {
+            return res.status(404).json({ message: "Profil karyawan aktif tidak ditemukan untuk akun ini" });
+        }
+
+        const now = new Date();
+        const dateStr = now.toISOString().slice(0, 10);
+
+        let shift = null;
+        if (emp.defaultShiftId) {
+            const [s] = await db
+                .select()
+                .from(workShifts)
+                .where(eq(workShifts.id, emp.defaultShiftId))
+                .limit(1);
+            shift = s;
+        }
+        if (!shift) {
+            const [s] = await db
+                .select()
+                .from(workShifts)
+                .where(eq(workShifts.isActive, true))
+                .limit(1);
+            shift = s;
+        }
+
+        const [existing] = await db
+            .select()
+            .from(attendances)
+            .where(
+                and(
+                    eq(attendances.employeeId, emp.id),
+                    eq(attendances.date, dateStr),
+                ),
+            )
+            .limit(1);
+
+        const locationStr =
+            location || (latitude && longitude ? `${latitude}, ${longitude}` : null);
+
+        if (type === "clock-out") {
+            if (!existing || !existing.clockIn) {
+                return res.status(400).json({ message: "Karyawan belum melakukan absensi masuk hari ini" });
+            }
+            if (existing.clockOut) {
+                return res.status(400).json({ message: "Karyawan sudah melakukan absensi pulang hari ini" });
+            }
+
+            let overtimeHours = 0;
+            if (shift) {
+                const shiftEndParts = shift.endTime.split(":");
+                const shiftEnd = new Date(now);
+                shiftEnd.setHours(
+                    parseInt(shiftEndParts[0], 10),
+                    parseInt(shiftEndParts[1], 10),
+                    0,
+                    0,
+                );
+                if (now.getTime() > shiftEnd.getTime()) {
+                    const diffMs = now.getTime() - shiftEnd.getTime();
+                    overtimeHours = Math.round((diffMs / (1000 * 60 * 60)) * 10) / 10;
+                }
+            }
+
+            const [updated] = await db
+                .update(attendances)
+                .set({
+                    clockOut: now,
+                    clockOutPhoto: photo || null,
+                    clockOutLocation: locationStr || null,
+                    overtimeHours,
+                    notes: notes ? (existing.notes ? `${existing.notes}; ${notes}` : notes) : existing.notes,
+                })
+                .where(eq(attendances.id, existing.id))
+                .returning();
+
+            return res.status(200).json({
+                status: 200,
+                message: `Absensi pulang berhasil dicatat untuk ${emp.fullName}`,
+                type: "clock-out",
+                employee: { id: emp.id, fullName: emp.fullName, nik: emp.nik, department: emp.department },
+                attendance: updated,
+            });
+        } else {
+            // clock-in
+            if (existing && existing.clockIn) {
+                return res.status(400).json({ message: "Karyawan sudah melakukan absensi masuk hari ini" });
+            }
+
+            let lateMinutes = 0;
+            let status = "present";
+            if (shift) {
+                lateMinutes = calculateLateMinutes(now, shift.startTime, shift.gracePeriodMinutes || 0);
+                if (lateMinutes > 0) {
+                    status = "late";
+                }
+            }
+
+            let result;
+            if (existing) {
+                const [updated] = await db
+                    .update(attendances)
+                    .set({
+                        shiftId: shift?.id || null,
+                        clockIn: now,
+                        clockInLocation: locationStr || null,
+                        clockInPhoto: photo || null,
+                        status,
+                        lateMinutes,
+                        notes: notes || existing.notes,
+                    })
+                    .where(eq(attendances.id, existing.id))
+                    .returning();
+                result = updated;
+            } else {
+                const [inserted] = await db
+                    .insert(attendances)
+                    .values({
+                        employeeId: emp.id,
+                        shiftId: shift?.id || null,
+                        date: dateStr,
+                        clockIn: now,
+                        clockInLocation: locationStr || null,
+                        clockInPhoto: photo || null,
+                        status,
+                        lateMinutes,
+                        overtimeHours: 0,
+                        notes: notes || null,
+                    })
+                    .returning();
+                result = inserted;
+            }
+
+            return res.status(200).json({
+                status: 200,
+                message:
+                    status === "late"
+                        ? `Absensi masuk berhasil untuk ${emp.fullName} (Terlambat ${lateMinutes} menit)`
+                        : `Absensi masuk berhasil untuk ${emp.fullName} tepat waktu`,
+                type: "clock-in",
+                employee: { id: emp.id, fullName: emp.fullName, nik: emp.nik, department: emp.department },
+                attendance: result,
+            });
+        }
+    } catch (err: any) {
+        console.error("Error in myClockIn:", err);
+        return res.status(500).json({ message: "Gagal mencatat absensi pribadi" });
+    }
+};
+

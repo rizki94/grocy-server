@@ -22,6 +22,8 @@ import {
     updatePayroll,
     updateWorkShift,
     verifyMobilePin,
+    getMyTodayAttendance,
+    myClockIn,
 } from "@/controllers/hrd.controller";
 import { Router } from "express";
 
@@ -44,6 +46,8 @@ hrdRouter.delete("/employees/:id", deleteEmployee);
 // Attendance
 hrdRouter.get("/attendances", getAttendances);
 hrdRouter.get("/attendances/summary", getAttendanceSummary);
+hrdRouter.get("/attendances/my-today", getMyTodayAttendance);
+hrdRouter.post("/attendances/my-clock-in", myClockIn);
 hrdRouter.post("/attendances/clock-in", recordClockIn);
 hrdRouter.post("/attendances/clock-out", recordClockOut);
 hrdRouter.post("/attendances/manual", manualAttendanceEntry);
