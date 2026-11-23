@@ -1468,3 +1468,206 @@ export const deletePayroll = async (req: Request, res: Response) => {
     }
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// MOBILE ATTENDANCE (PIN-BASED)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const verifyMobilePin = async (req: Request, res: Response) => {
+    const { pin } = req.body;
+    if (!pin || typeof pin !== "string") {
+        return res.status(400).json({ message: "PIN absensi wajib diisi" });
+    }
+
+    try {
+        const [emp] = await db
+            .select({
+                id: employees.id,
+                nik: employees.nik,
+                fullName: employees.fullName,
+                department: employees.department,
+                position: employees.position,
+                branchId: employees.branchId,
+                defaultShiftId: employees.defaultShiftId,
+                isActive: employees.isActive,
+            })
+            .from(employees)
+            .where(and(eq(employees.mobilePin, pin.trim()), eq(employees.isActive, true)))
+            .limit(1);
+
+        if (!emp) {
+            return res.status(404).json({ message: "PIN absensi tidak ditemukan atau karyawan tidak aktif" });
+        }
+
+        // Shift info
+        const shiftId = emp.defaultShiftId;
+        let shift = null;
+        if (shiftId) {
+            const [s] = await db.select().from(workShifts).where(eq(workShifts.id, shiftId)).limit(1);
+            shift = s;
+        }
+        if (!shift) {
+            const [s] = await db.select().from(workShifts).where(eq(workShifts.isActive, true)).limit(1);
+            shift = s;
+        }
+
+        // Check today's attendance
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const [todayAtt] = await db
+            .select()
+            .from(attendances)
+            .where(and(eq(attendances.employeeId, emp.id), eq(attendances.date, todayStr)))
+            .limit(1);
+
+        return res.status(200).json({
+            status: 200,
+            employee: emp,
+            shift,
+            todayAttendance: todayAtt || null,
+        });
+    } catch (err: any) {
+        console.error("Error verifying employee PIN:", err);
+        return res.status(500).json({ message: "Gagal memverifikasi PIN absensi" });
+    }
+};
+
+export const mobileClockIn = async (req: Request, res: Response) => {
+    const { pin, type, photo, latitude, longitude, location, notes } = req.body;
+    if (!pin || typeof pin !== "string") {
+        return res.status(400).json({ message: "PIN absensi wajib diisi" });
+    }
+
+    try {
+        const [emp] = await db
+            .select()
+            .from(employees)
+            .where(and(eq(employees.mobilePin, pin.trim()), eq(employees.isActive, true)))
+            .limit(1);
+
+        if (!emp) {
+            return res.status(404).json({ message: "PIN absensi tidak ditemukan atau karyawan tidak aktif" });
+        }
+
+        const now = new Date();
+        const dateStr = now.toISOString().slice(0, 10);
+        const locationStr = location || (latitude && longitude ? `${latitude},${longitude}` : null);
+
+        // Shift
+        const shiftId = emp.defaultShiftId;
+        let shift = null;
+        if (shiftId) {
+            const [s] = await db.select().from(workShifts).where(eq(workShifts.id, shiftId)).limit(1);
+            shift = s;
+        }
+        if (!shift) {
+            const [s] = await db.select().from(workShifts).where(eq(workShifts.isActive, true)).limit(1);
+            shift = s;
+        }
+
+        // Today's attendance
+        const [existing] = await db
+            .select()
+            .from(attendances)
+            .where(and(eq(attendances.employeeId, emp.id), eq(attendances.date, dateStr)))
+            .limit(1);
+
+        const actionType = type || (existing && existing.clockIn && !existing.clockOut ? "clock-out" : "clock-in");
+
+        if (actionType === "clock-out") {
+            if (!existing || !existing.clockIn) {
+                return res.status(400).json({ message: "Karyawan belum melakukan absensi masuk hari ini" });
+            }
+            if (existing.clockOut) {
+                return res.status(400).json({ message: "Karyawan sudah melakukan absensi pulang hari ini" });
+            }
+
+            let overtimeHours = 0;
+            if (shift) {
+                overtimeHours = calculateOvertimeHours(now, shift.endTime);
+            }
+
+            const [updated] = await db
+                .update(attendances)
+                .set({
+                    clockOut: now,
+                    clockOutPhoto: photo || null,
+                    clockOutLocation: locationStr || null,
+                    overtimeHours,
+                    notes: notes ? (existing.notes ? `${existing.notes}; ${notes}` : notes) : existing.notes,
+                })
+                .where(eq(attendances.id, existing.id))
+                .returning();
+
+            return res.status(200).json({
+                status: 200,
+                message: `Absensi pulang berhasil dicatat untuk ${emp.fullName}`,
+                type: "clock-out",
+                employee: { id: emp.id, fullName: emp.fullName, nik: emp.nik, department: emp.department },
+                attendance: updated,
+            });
+        } else {
+            // clock-in
+            if (existing && existing.clockIn) {
+                return res.status(400).json({ message: "Karyawan sudah melakukan absensi masuk hari ini" });
+            }
+
+            let lateMinutes = 0;
+            let status = "present";
+            if (shift) {
+                lateMinutes = calculateLateMinutes(now, shift.startTime, shift.gracePeriodMinutes || 0);
+                if (lateMinutes > 0) {
+                    status = "late";
+                }
+            }
+
+            let result;
+            if (existing) {
+                const [updated] = await db
+                    .update(attendances)
+                    .set({
+                        shiftId: shift?.id || null,
+                        clockIn: now,
+                        clockInLocation: locationStr || null,
+                        clockInPhoto: photo || null,
+                        status,
+                        lateMinutes,
+                        notes: notes || existing.notes,
+                    })
+                    .where(eq(attendances.id, existing.id))
+                    .returning();
+                result = updated;
+            } else {
+                const [inserted] = await db
+                    .insert(attendances)
+                    .values({
+                        employeeId: emp.id,
+                        shiftId: shift?.id || null,
+                        date: dateStr,
+                        clockIn: now,
+                        clockInLocation: locationStr || null,
+                        clockInPhoto: photo || null,
+                        status,
+                        lateMinutes,
+                        overtimeHours: 0,
+                        notes: notes || null,
+                    })
+                    .returning();
+                result = inserted;
+            }
+
+            return res.status(200).json({
+                status: 200,
+                message:
+                    status === "late"
+                        ? `Absensi masuk berhasil untuk ${emp.fullName} (Terlambat ${lateMinutes} menit)`
+                        : `Absensi masuk berhasil untuk ${emp.fullName} tepat waktu`,
+                type: "clock-in",
+                employee: { id: emp.id, fullName: emp.fullName, nik: emp.nik, department: emp.department },
+                attendance: result,
+            });
+        }
+    } catch (err: any) {
+        console.error("Error in mobileClockIn:", err);
+        return res.status(500).json({ message: "Gagal mencatat absensi mobile" });
+    }
+};
+

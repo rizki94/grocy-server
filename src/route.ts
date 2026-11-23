@@ -56,16 +56,22 @@ import tenantRouter from "./routes/tenant.route";
 import dataAuditRouter from "./routes/data-audit.route";
 
 import { refresh } from "./controllers/auth.controller";
+import { mobileClockIn, verifyMobilePin } from "./controllers/hrd.controller";
 
 export const route = Router();
 
-// Public routes (Auth, Tenant/Onboarding, Bridge)
+// Public routes (Auth, Tenant/Onboarding, Bridge, Mobile Attendance)
 route.use("/tenant", tenantRouter);
 route.use("/auth", authRouter);
 route.get("/refresh", refresh);
 route.use("/bridge", bridgeRouter);
 route.use("/bridge-import", bridgeImportRouter);
 route.use("/marketplaces", marketplaceRouter);
+
+// Public Mobile Attendance (PIN-based, employee-driven, multi-tenant aware)
+route.post("/hrd/attendances/verify-pin", verifyMobilePin);
+route.post("/hrd/attendances/mobile-clock-in", mobileClockIn);
+
 route.use(isAuthenticated);
 route.get("/me", (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);

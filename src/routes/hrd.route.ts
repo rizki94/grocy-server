@@ -15,11 +15,13 @@ import {
     getWorkShifts,
     generateMonthlyPayroll,
     manualAttendanceEntry,
+    mobileClockIn,
     recordClockIn,
     recordClockOut,
     updateEmployee,
     updatePayroll,
     updateWorkShift,
+    verifyMobilePin,
 } from "@/controllers/hrd.controller";
 import { Router } from "express";
 
@@ -46,6 +48,8 @@ hrdRouter.post("/attendances/clock-in", recordClockIn);
 hrdRouter.post("/attendances/clock-out", recordClockOut);
 hrdRouter.post("/attendances/manual", manualAttendanceEntry);
 hrdRouter.delete("/attendances/:id", deleteAttendance);
+hrdRouter.post("/attendances/verify-pin", verifyMobilePin);
+hrdRouter.post("/attendances/mobile-clock-in", mobileClockIn);
 
 // Payroll
 hrdRouter.get("/payrolls", getPayrolls);
