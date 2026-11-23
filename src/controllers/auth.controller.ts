@@ -100,6 +100,7 @@ export const login = async (
                 const ip = getClientIp(req);
                 const userAgent = req.get("User-Agent") || "unknown";
 
+                delete (req.session as any).isPinSession;
                 (req.session as typeof req.session & { meta?: SessionMeta }).meta = {
                     userId: user.id,
                     username: user.username,
@@ -412,17 +413,24 @@ export const loginPinNative = async (req: Request, res: Response) => {
         }
 
         const token = jwt.sign(
-            { id: user.id, username: user.username, employeeId: employee.id },
+            { id: user.id, username: user.username, employeeId: employee.id, isPinSession: true },
             process.env.JWT_SECRET || "secret",
             { expiresIn: "12h" }
         );
 
-        // If running in session context (web browser), authenticate passport session
+        // If running in session context (web browser), authenticate passport session marked strictly as PIN/Cashier
         if (typeof req.logIn === "function") {
             await new Promise<void>((resolve) => {
                 req.logIn(user, () => {
-                    if (req.session && typeof req.session.save === "function") {
-                        req.session.save(() => resolve());
+                    if (req.session) {
+                        (req.session as any).isPinSession = true;
+                        (req.session as any).employeeId = employee.id;
+                        (req.session as any).employeeName = employee.fullName;
+                        if (typeof req.session.save === "function") {
+                            req.session.save(() => resolve());
+                        } else {
+                            resolve();
+                        }
                     } else {
                         resolve();
                     }
@@ -430,11 +438,18 @@ export const loginPinNative = async (req: Request, res: Response) => {
             });
         }
 
-        const allPerms = await db
-            .select({ code: permissions.code })
-            .from(permissions);
-        const dbCodes = allPerms.map((p) => p.code);
-        const allowedPermissions = Array.from(new Set([...dbCodes, ...ALL_PERMISSION_CODES]));
+        // Cashier PIN session is strictly restricted to POS operations (NO ADMIN ACCESS)
+        const allowedPermissions = [
+            "pos.interface.view",
+            "pos.checkout",
+            "pos.session.open",
+            "pos.session.close",
+            "pos.session.history",
+            "pos.product.read",
+            "pos.customer.read",
+            "pos.receipt.print",
+            "pos.payment_method.read",
+        ];
 
         return res.status(200).json({
             status: 200,
@@ -452,6 +467,7 @@ export const loginPinNative = async (req: Request, res: Response) => {
                 branchId: employee.branchId || user.branchId,
                 isSuperAdmin: false,
                 isPinSession: true,
+                permissions: allowedPermissions,
             },
             permission: allowedPermissions,
         });
