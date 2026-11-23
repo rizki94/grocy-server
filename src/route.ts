@@ -55,7 +55,7 @@ import crmRouter from "./routes/crm.route";
 import tenantRouter from "./routes/tenant.route";
 import dataAuditRouter from "./routes/data-audit.route";
 
-import { refresh } from "./controllers/auth.controller";
+import { loginNative, refresh } from "./controllers/auth.controller";
 import { mobileClockIn, verifyMobilePin } from "./controllers/hrd.controller";
 
 export const route = Router();
@@ -63,6 +63,7 @@ export const route = Router();
 // Public routes (Auth, Tenant/Onboarding, Bridge, Mobile Attendance)
 route.use("/tenant", tenantRouter);
 route.use("/auth", authRouter);
+route.post("/login_native", loginNative);
 route.get("/refresh", refresh);
 route.use("/bridge", bridgeRouter);
 route.use("/bridge-import", bridgeImportRouter);

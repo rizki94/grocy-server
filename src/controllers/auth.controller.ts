@@ -193,6 +193,9 @@ export const loginNative = async (
     res: Response,
     next: NextFunction
 ) => {
+    if (req.body && !req.body.username && req.body.name) {
+        req.body.username = req.body.name;
+    }
     passport.authenticate(
         "local",
         async (err: unknown, user: UserModel | false, info: { message?: string }) => {
