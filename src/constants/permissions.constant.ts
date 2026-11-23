@@ -10,6 +10,7 @@ export interface PermissionDef {
 }
 
 export const PERMISSION_GROUPS: PermissionGroupDef[] = [
+    { name: "Dashboard", code: "dashboard" },
     { name: "User Management", code: "user" },
     { name: "Product Management", code: "product" },
     { name: "Contact Management", code: "contact" },
@@ -26,6 +27,9 @@ export const PERMISSION_GROUPS: PermissionGroupDef[] = [
 ];
 
 export const ALL_PERMISSIONS: PermissionDef[] = [
+    // Dashboard
+    { code: "dashboard.view", description: "View Dashboard Overview", group: "dashboard" },
+
     // User
     { code: "user.create", description: "Create User", group: "user" },
     { code: "user.update", description: "Update User", group: "user" },

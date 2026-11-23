@@ -69,6 +69,7 @@ export async function seedAccounts(dbInstance: typeof db) {
 
     // 3. Permission Groups & Permissions
     const groupsRaw = [
+        { name: "Dashboard", code: "dashboard" },
         { name: "User Management", code: "user" },
         { name: "Product Management", code: "product" },
         { name: "Contact Management", code: "contact" },
@@ -95,6 +96,9 @@ export async function seedAccounts(dbInstance: typeof db) {
     }
 
     const permissionsList = [
+        // Dashboard
+        { code: "dashboard.view", description: "View Dashboard Overview", group: "dashboard" },
+
         // User
         { code: "user.create", description: "Create User", group: "user" },
         { code: "user.update", description: "Update User", group: "user" },
