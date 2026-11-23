@@ -1,7 +1,7 @@
 import { db } from "@/db";
 import { permissions } from "@/db/schemas/permission.schema";
 import { rolePermissions } from "@/db/schemas/role-permission.schema";
-import { sessions, users, roles } from "@/db/schemas";
+import { sessions, users, roles, employees } from "@/db/schemas";
 import { ALL_PERMISSION_CODES } from "@/constants/permissions.constant";
 import { logAction } from "@/utils/log-helper";
 import { UserModel } from "@/validators/user.validator";
@@ -375,5 +375,75 @@ export const refresh = async (req: Request, res: Response) => {
     } catch (error) {
         console.error("Refresh error:", error);
         res.status(500).json({ status: 500, message: "Internal server error" });
+    }
+};
+
+export const loginPinNative = async (req: Request, res: Response) => {
+    const { pin } = req.body;
+    if (!pin) {
+        return res.status(400).json({ status: 400, message: "PIN wajib diisi" });
+    }
+
+    try {
+        const [employee] = await db
+            .select()
+            .from(employees)
+            .where(and(eq(employees.mobilePin, pin.trim()), eq(employees.isActive, true)))
+            .limit(1);
+
+        if (!employee) {
+            return res.status(401).json({ status: 401, message: "PIN kasir / karyawan tidak valid" });
+        }
+
+        // Find user with pos setup (cashGlAccountId & posWarehouseId) matching branch or default
+        let user = await db
+            .select()
+            .from(users)
+            .where(and(sql`${users.cashGlAccountId} IS NOT NULL`, sql`${users.posWarehouseId} IS NOT NULL`))
+            .limit(1)
+            .then(r => r[0]);
+
+        if (!user) {
+            user = await db.select().from(users).limit(1).then(r => r[0]);
+        }
+
+        if (!user) {
+            return res.status(400).json({ status: 400, message: "User sistem belum dikonfigurasi" });
+        }
+
+        const token = jwt.sign(
+            { id: user.id, username: user.username, employeeId: employee.id },
+            process.env.JWT_SECRET || "secret",
+            { expiresIn: "12h" }
+        );
+
+        const allPerms = await db
+            .select({ code: permissions.code })
+            .from(permissions);
+        const dbCodes = allPerms.map((p) => p.code);
+        const allowedPermissions = Array.from(new Set([...dbCodes, ...ALL_PERMISSION_CODES]));
+
+        return res.status(200).json({
+            status: 200,
+            message: "Login PIN berhasil",
+            token,
+            user: {
+                id: user.id,
+                username: user.username,
+                name: employee.fullName,
+                displayName: employee.fullName,
+                employeeId: employee.id,
+                department: employee.department,
+                role: "Kasir (PIN)",
+                role_name: "Kasir (PIN)",
+                branchId: employee.branchId || user.branchId,
+                isSuperAdmin: false,
+                isPinSession: true,
+            },
+            permission: allowedPermissions,
+        });
+    } catch (err: any) {
+        console.error("loginPinNative error:", err);
+        return res.status(500).json({ status: 500, message: err.message || "Gagal verifikasi PIN kasir" });
     }
 };
