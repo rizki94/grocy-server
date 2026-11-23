@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { isAuthenticated } from "./middleware/auth";
+import { pinSessionGuard } from "./middleware/pin-guard";
 import authRouter from "./routes/auth.route";
 import logsRouter from "./routes/log.route";
 import customerRouter from "./routes/customer.route";
@@ -112,6 +113,10 @@ route.get("/me", (req, res) => {
         user: safeUser,
     });
 });
+
+// Guard: Sesi PIN Kasir DITOLAK dari semua API Administrasi & Manajemen
+route.use(pinSessionGuard);
+
 route.use("/dashboard", dashboardRouter);
 route.use("/logs", logsRouter);
 route.use("/users", userRouter);
