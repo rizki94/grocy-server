@@ -417,6 +417,19 @@ export const loginPinNative = async (req: Request, res: Response) => {
             { expiresIn: "12h" }
         );
 
+        // If running in session context (web browser), authenticate passport session
+        if (typeof req.logIn === "function") {
+            await new Promise<void>((resolve) => {
+                req.logIn(user, () => {
+                    if (req.session && typeof req.session.save === "function") {
+                        req.session.save(() => resolve());
+                    } else {
+                        resolve();
+                    }
+                });
+            });
+        }
+
         const allPerms = await db
             .select({ code: permissions.code })
             .from(permissions);

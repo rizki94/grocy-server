@@ -108,6 +108,7 @@ export const generatePayrollSchema = z.object({
     endDate: z.string().min(1, "End date is required"),
     branchId: z.string().uuid().optional().nullable(),
     employeeId: z.string().uuid().optional().nullable(),
+    workingDays: z.coerce.number().min(1).default(21),
     lateDeductionPerMinute: z.coerce.number().min(0).default(0),
     overtimeHourlyRate: z.coerce.number().min(0).optional().nullable(), // If not specified, calculated from baseSalary / 173
 });

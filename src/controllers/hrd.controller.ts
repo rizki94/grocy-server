@@ -4,6 +4,7 @@ import {
     branches,
     drivers,
     employees,
+    glAccounts,
     payrolls,
     users,
     workShifts,
@@ -11,6 +12,7 @@ import {
 import { logAction } from "@/utils/log-helper";
 import bcrypt from "bcrypt";
 import { withBranch } from "@/helpers/branch.helper";
+import { createJournal } from "@/repositories/journal.repository";
 import {
     attendanceClockInSchema,
     attendanceClockOutSchema,
@@ -1035,7 +1037,7 @@ export const generateMonthlyPayroll = async (req: Request, res: Response) => {
         });
     }
 
-    const { period, startDate, endDate, branchId, employeeId, lateDeductionPerMinute, overtimeHourlyRate } =
+    const { period, startDate, endDate, branchId, employeeId, workingDays, lateDeductionPerMinute, overtimeHourlyRate } =
         parsed.data;
 
     try {
@@ -1074,6 +1076,8 @@ export const generateMonthlyPayroll = async (req: Request, res: Response) => {
             if (!isNaN(num)) nextSeq = num + 1;
         }
 
+        const effectiveWorkingDays = Number(workingDays) > 0 ? Number(workingDays) : 21;
+
         for (const emp of activeEmployees) {
             // Query attendances for this employee in date range
             const empAttendances = await db
@@ -1087,32 +1091,63 @@ export const generateMonthlyPayroll = async (req: Request, res: Response) => {
                     ),
                 );
 
-            let presentDays = 0;
+            let presentDays = 0;       // Hadir Fisik (Present, Late, Early Leave)
+            let paidAbsenceDays = 0;   // Libur Resmi/Tanggal Merah, Cuti, Sakit, Izin Dinas
             let lateMinutes = 0;
             let overtimeHours = 0;
 
             for (const att of empAttendances) {
-                if (["present", "late", "early_leave"].includes(att.status) || att.clockIn) {
+                const st = (att.status || "").toLowerCase();
+                const notes = (att.notes || "").toLowerCase();
+
+                // 1. Kehadiran Fisik di tempat kerja
+                if (["present", "late", "early_leave"].includes(st) || att.clockIn) {
                     presentDays += 1;
                 }
+                // 2. Alasan yang tetap MASUK ke perhitungan gaji (PAID ABSENCE):
+                // - Tanggal Merah / Libur Resmi (holiday)
+                // - Cuti Berbayar (leave)
+                // - Sakit dengan surat dokter (sick)
+                // - Izin Resmi / Dinas (permit)
+                else if (
+                    ["holiday", "leave", "sick", "permit_paid"].includes(st) ||
+                    st.includes("libur") ||
+                    st.includes("cuti") ||
+                    st.includes("sakit") ||
+                    (st === "permit" && !notes.includes("unpaid") && !notes.includes("tanpa gaji"))
+                ) {
+                    paidAbsenceDays += 1;
+                }
+
                 lateMinutes += Number(att.lateMinutes || 0);
                 overtimeHours += Number(att.overtimeHours || 0);
             }
 
-            const baseSalary = Number(emp.baseSalary || 0);
+            // Total Hari Dihitung Masuk (Paid Days):
+            const totalPaidDays = presentDays + paidAbsenceDays;
+
+            const baseSalaryMaster = Number(emp.baseSalary || 0);
+
+            // Rumus Gaji Bulanan: Gaji Pokok Master / Hari Kerja * Hari Masuk
+            // Jika hari masuk >= hari kerja, karyawan berhak atas 100% gaji pokok utuh.
+            const earnedBaseSalary = Math.round(
+                Math.min(1, totalPaidDays / effectiveWorkingDays) * baseSalaryMaster
+            );
+
+            // Tunjangan Harian (Uang Makan & Transport riil): diberikan sesuai kehadiran fisik (presentDays)
             const dailyAllowance = Number(emp.dailyAllowance || 0);
             const totalAllowance = dailyAllowance * presentDays;
 
-            // Depnaker standard hourly rate: baseSalary / 173, or custom rate
+            // Depnaker standard hourly rate: baseSalaryMaster / 173, or custom rate
             const hourlyRate = overtimeHourlyRate !== null && overtimeHourlyRate !== undefined && overtimeHourlyRate > 0
                 ? overtimeHourlyRate
-                : (baseSalary > 0 ? Math.round(baseSalary / 173) : 0);
+                : (baseSalaryMaster > 0 ? Math.round(baseSalaryMaster / 173) : 0);
 
             const totalOvertimePay = Math.round(overtimeHours * hourlyRate);
             const lateDeduction = Math.round(lateMinutes * (lateDeductionPerMinute || 0));
             const totalDeduction = lateDeduction;
             const totalIncentive = 0;
-            const netSalary = Math.max(0, baseSalary + totalAllowance + totalOvertimePay + totalIncentive - totalDeduction);
+            const netSalary = Math.max(0, earnedBaseSalary + totalAllowance + totalOvertimePay + totalIncentive - totalDeduction);
 
             // Check if payroll already exists for this period and employee
             const [existingPayroll] = await db
@@ -1141,14 +1176,14 @@ export const generateMonthlyPayroll = async (req: Request, res: Response) => {
                         presentDays,
                         lateMinutes,
                         overtimeHours,
-                        baseSalary,
+                        baseSalary: earnedBaseSalary,
                         totalAllowance,
                         totalOvertimePay,
                         totalIncentive: Number(existingPayroll.totalIncentive || 0),
                         totalDeduction,
                         netSalary: Math.max(
                             0,
-                            baseSalary +
+                            earnedBaseSalary +
                             totalAllowance +
                             totalOvertimePay +
                             Number(existingPayroll.totalIncentive || 0) -
@@ -1171,7 +1206,7 @@ export const generateMonthlyPayroll = async (req: Request, res: Response) => {
                         presentDays,
                         lateMinutes,
                         overtimeHours,
-                        baseSalary,
+                        baseSalary: earnedBaseSalary,
                         totalAllowance,
                         totalOvertimePay,
                         totalIncentive,
@@ -1432,6 +1467,73 @@ export const updatePayroll = async (req: Request, res: Response) => {
             })
             .where(eq(payrolls.id, parsed.data.id))
             .returning();
+
+        // Auto-generate accounting journal entry when payroll transitions to 'paid'
+        if (parsed.data.status === "paid" && existing.status !== "paid" && netSalary > 0) {
+            try {
+                // 1. Find Beban Gaji & Upah account (code 5210 or expense containing 'gaji')
+                const expenseAcc = await db
+                    .select()
+                    .from(glAccounts)
+                    .where(
+                        or(
+                            eq(glAccounts.code, "5210"),
+                            and(eq(glAccounts.type, "expense"), like(sql`LOWER(${glAccounts.name})`, "%gaji%"))
+                        )
+                    )
+                    .limit(1)
+                    .then(r => r[0]);
+
+                // 2. Find Cash account (code 1100 Kas, 1200 Bank, or asset containing 'kas')
+                const cashAcc = await db
+                    .select()
+                    .from(glAccounts)
+                    .where(
+                        or(
+                            eq(glAccounts.code, "1100"),
+                            eq(glAccounts.code, "1200"),
+                            and(eq(glAccounts.type, "asset"), like(sql`LOWER(${glAccounts.name})`, "%kas%"))
+                        )
+                    )
+                    .limit(1)
+                    .then(r => r[0]);
+
+                // 3. Employee details
+                const [emp] = await db
+                    .select()
+                    .from(employees)
+                    .where(eq(employees.id, existing.employeeId))
+                    .limit(1);
+
+                if (expenseAcc && cashAcc) {
+                    await createJournal(
+                        {
+                            date: (paidAt ? new Date(paidAt) : new Date()).toISOString().slice(0, 10),
+                            description: `Pembayaran Gaji Karyawan: ${emp?.fullName || "Karyawan"} - Periode ${existing.period} (${existing.invoice})`,
+                            status: "posted",
+                            entries: [
+                                {
+                                    glAccountId: expenseAcc.id,
+                                    debit: netSalary,
+                                    credit: 0,
+                                    note: `Beban Gaji - ${emp?.fullName || "Karyawan"} (${existing.invoice})`,
+                                },
+                                {
+                                    glAccountId: cashAcc.id,
+                                    debit: 0,
+                                    credit: netSalary,
+                                    note: `Kas Keluar Gaji - ${emp?.fullName || "Karyawan"} (${existing.period})`,
+                                },
+                            ],
+                        },
+                        req.user!,
+                        emp?.branchId || null
+                    );
+                }
+            } catch (jErr) {
+                console.error("Failed to auto-generate journal for payroll:", jErr);
+            }
+        }
 
         return res.status(200).json({
             message: "Payroll updated successfully",
