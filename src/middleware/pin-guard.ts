@@ -29,11 +29,19 @@ export function pinSessionGuard(
         "/customers",
         "/payment-methods",
         "/stocks",
+        "/crm",
+        "/settings",
+        "/taxes",
+        "/branches",
+        "/warehouses",
     ];
 
-    const targetPath = req.baseUrl || req.path || "";
+    // Normalize path from req.originalUrl or req.path, removing query string and /api prefix
+    const rawUrl = req.originalUrl?.split("?")[0] || req.path || "";
+    const cleanPath = rawUrl.replace(/^\/api/, "") || "/";
+
     const isAllowed = allowedPrefixes.some((prefix) =>
-        targetPath.startsWith(prefix)
+        cleanPath === prefix || cleanPath.startsWith(prefix + "/") || cleanPath.startsWith(prefix + "?") || cleanPath.startsWith(prefix)
     );
 
     if (!isAllowed) {
