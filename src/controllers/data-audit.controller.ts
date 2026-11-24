@@ -22,6 +22,7 @@ import { resolveBranchCodeFromId, resolveBranchId } from "@/helpers/branch.helpe
 import { updateStockForTransaction } from "@/repositories/stock.repository";
 import { addDays } from "@/helpers/add-days";
 import { logger } from "@/logger";
+import { getCogsGlAccountId, getInventoryGlAccountId } from "@/repositories/gl-account.repository";
 
 export interface AuditIssue {
     id: string;
@@ -176,21 +177,55 @@ export async function getDataIntegrityAudit(req: Request, res: Response) {
         }
 
         // d. Selisih Nominal Transaksi dengan Total Jurnal
+        // Pada akuntansi perpetual (sales/pos_sales/sales_return), jurnal mencatat nilai transaksi (piutang/hutang/pendapatan)
+        // PLUS beban pokok penjualan (HPP) & pengurangan persediaan.
+        // Oleh karena itu, kita membandingkan nilai transaksi dengan effective debit/credit (tanpa baris HPP/persediaan)
         const journalAmountMismatchRes = await db.execute(sql`
             SELECT 
                 t.id, t.type, t.invoice, t.date, t.total_amount::numeric as trx_total,
                 j.id as journal_id, j.invoice as journal_invoice,
-                COALESCE(SUM(je.debit), 0)::numeric as journal_debit,
-                COALESCE(SUM(je.credit), 0)::numeric as journal_credit,
-                ABS(t.total_amount - COALESCE(SUM(je.debit), 0))::numeric as diff
+                COALESCE(SUM(
+                    CASE 
+                        WHEN t.type IN ('sales', 'pos_sales') AND (gl.code LIKE '5%' OR gl.type = 'expense' OR je.note ILIKE '%pokok%' OR je.note ILIKE '%hpp%') THEN 0
+                        WHEN t.type = 'sales_return' AND (gl.code LIKE '14%' OR je.note ILIKE '%persediaan%') THEN 0
+                        ELSE je.debit
+                    END
+                ), 0)::numeric as effective_debit,
+                COALESCE(SUM(
+                    CASE 
+                        WHEN t.type IN ('sales', 'pos_sales') AND (gl.code LIKE '14%' OR je.note ILIKE '%persediaan%') THEN 0
+                        WHEN t.type = 'sales_return' AND (gl.code LIKE '5%' OR gl.type = 'expense' OR je.note ILIKE '%pokok%' OR je.note ILIKE '%hpp%') THEN 0
+                        ELSE je.credit
+                    END
+                ), 0)::numeric as effective_credit,
+                ABS(t.total_amount - COALESCE(SUM(
+                    CASE 
+                        WHEN t.type IN ('sales', 'pos_sales') AND (gl.code LIKE '5%' OR gl.type = 'expense' OR je.note ILIKE '%pokok%' OR je.note ILIKE '%hpp%') THEN 0
+                        WHEN t.type = 'sales_return' AND (gl.code LIKE '14%' OR je.note ILIKE '%persediaan%') THEN 0
+                        ELSE je.debit
+                    END
+                ), 0))::numeric as diff
             FROM transactions t
             JOIN journals j ON j.transaction_id = t.id AND j.status != 'cancelled'
             LEFT JOIN journal_entries je ON je.journal_id = j.id
+            LEFT JOIN gl_accounts gl ON gl.id = je.account_id
             WHERE t.status IN ('posted', 'partial', 'paid')
               AND t.type IN ('sales', 'purchase', 'sales_return', 'purchase_return', 'pos_sales')
             GROUP BY t.id, t.type, t.invoice, t.date, t.total_amount, j.id, j.invoice
-            HAVING ABS(t.total_amount - COALESCE(SUM(je.debit), 0)) > 0.05
-               OR ABS(t.total_amount - COALESCE(SUM(je.credit), 0)) > 0.05
+            HAVING ABS(t.total_amount - COALESCE(SUM(
+                    CASE 
+                        WHEN t.type IN ('sales', 'pos_sales') AND (gl.code LIKE '5%' OR gl.type = 'expense' OR je.note ILIKE '%pokok%' OR je.note ILIKE '%hpp%') THEN 0
+                        WHEN t.type = 'sales_return' AND (gl.code LIKE '14%' OR je.note ILIKE '%persediaan%') THEN 0
+                        ELSE je.debit
+                    END
+                ), 0)) > 0.05
+               OR ABS(t.total_amount - COALESCE(SUM(
+                    CASE 
+                        WHEN t.type IN ('sales', 'pos_sales') AND (gl.code LIKE '14%' OR je.note ILIKE '%persediaan%') THEN 0
+                        WHEN t.type = 'sales_return' AND (gl.code LIKE '5%' OR gl.type = 'expense' OR je.note ILIKE '%pokok%' OR je.note ILIKE '%hpp%') THEN 0
+                        ELSE je.credit
+                    END
+                ), 0)) > 0.05
             ORDER BY t.date DESC;
         `);
 
@@ -201,9 +236,9 @@ export async function getDataIntegrityAudit(req: Request, res: Response) {
                 type: "journal_amount_mismatch",
                 reference: `${row.invoice} (${row.journal_invoice})`,
                 date: row.date,
-                description: `Nominal transaksi #${row.invoice} (Rp ${Number(row.trx_total).toLocaleString()}) tidak sama dengan total jurnal (Rp ${Number(row.journal_debit).toLocaleString()})`,
+                description: `Nominal transaksi #${row.invoice} (Rp ${Number(row.trx_total).toLocaleString()}) tidak sama dengan pengakuan nilai transaksi di jurnal (Rp ${Number(row.effective_debit).toLocaleString()})`,
                 expectedValue: Number(row.trx_total),
-                actualValue: Number(row.journal_debit),
+                actualValue: Number(row.effective_debit),
                 difference: Number(row.diff || 0),
                 canAutoFix: true,
                 fixAction: "regenerate_journal",
@@ -1091,6 +1126,70 @@ export async function reconcileDataIntegrity(req: Request, res: Response) {
                                         credit: map.side === "credit" ? amount : 0,
                                         note: `${map.note} ${trx.invoice}`,
                                     });
+                                }
+                            }
+                        }
+
+                        // Catat HPP & Persediaan untuk sistem perpetual (sales, pos_sales, sales_return)
+                        if (["sales", "pos_sales", "sales_return"].includes(trx.type)) {
+                            const detailsWithCost = await tx
+                                .select()
+                                .from(transactionDetails)
+                                .where(eq(transactionDetails.transactionId, trx.id));
+
+                            const totalCogs = detailsWithCost.reduce(
+                                (sum: number, d: any) =>
+                                    sum + Number(d.totalCost || (Number(d.qty || 0) * Number(d.unitCost || 0))),
+                                0,
+                            );
+
+                            if (totalCogs > 0) {
+                                const cogsGlId =
+                                    (await getCogsGlAccountId(tx)) ||
+                                    (await findGlAccountId("5100", tx));
+                                const invGlId =
+                                    (await getInventoryGlAccountId(tx)) ||
+                                    (await findGlAccountId("1400", tx)) ||
+                                    (await findGlAccountId("1410", tx));
+
+                                if (trx.type === "sales" || trx.type === "pos_sales") {
+                                    if (cogsGlId) {
+                                        await tx.insert(journalEntries).values({
+                                            journalId: newJournal.id,
+                                            glAccountId: cogsGlId,
+                                            debit: totalCogs,
+                                            credit: 0,
+                                            note: `Beban Pokok Penjualan ${trx.invoice}`,
+                                        });
+                                    }
+                                    if (invGlId) {
+                                        await tx.insert(journalEntries).values({
+                                            journalId: newJournal.id,
+                                            glAccountId: invGlId,
+                                            debit: 0,
+                                            credit: totalCogs,
+                                            note: `Pengurangan Persediaan ${trx.invoice}`,
+                                        });
+                                    }
+                                } else if (trx.type === "sales_return") {
+                                    if (invGlId) {
+                                        await tx.insert(journalEntries).values({
+                                            journalId: newJournal.id,
+                                            glAccountId: invGlId,
+                                            debit: totalCogs,
+                                            credit: 0,
+                                            note: `Persediaan Retur Penjualan ${trx.invoice}`,
+                                        });
+                                    }
+                                    if (cogsGlId) {
+                                        await tx.insert(journalEntries).values({
+                                            journalId: newJournal.id,
+                                            glAccountId: cogsGlId,
+                                            debit: 0,
+                                            credit: totalCogs,
+                                            note: `Pengurangan HPP Retur Penjualan ${trx.invoice}`,
+                                        });
+                                    }
                                 }
                             }
                         }
