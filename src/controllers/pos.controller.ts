@@ -430,6 +430,7 @@ export async function checkout(req: Request, res: Response) {
             }> = [];
             let totalArReduction = 0;
             let totalRoundAmount = 0;
+            let totalFeeAmount = 0;
 
             for (const item of paymentItems) {
                 let itemAmount = Number(item.amount);
@@ -439,7 +440,12 @@ export async function checkout(req: Request, res: Response) {
                 const [method] = await tx
                     .select()
                     .from(paymentMethods)
-                    .where(ilike(paymentMethods.name, activeMethodName))
+                    .where(
+                        or(
+                            ilike(paymentMethods.name, activeMethodName),
+                            eq(paymentMethods.id, activeMethodName),
+                        ),
+                    )
                     .limit(1);
 
                 // Admin Fee Calculation
@@ -450,6 +456,7 @@ export async function checkout(req: Request, res: Response) {
                     const feePct = Number(method.feePercentage);
                     feeAmount = Math.round((itemAmount * feePct) / (100 + feePct));
                 }
+                totalFeeAmount += feeAmount;
 
                 // Create Payment Record
                 const [payment] = await tx
@@ -653,6 +660,8 @@ export async function checkout(req: Request, res: Response) {
                 customerPhone: customer?.phone || "",
                 offlineInvoice: req.body.offlineInvoice,
                 earnedPoints,
+                feeAmount: totalFeeAmount,
+                payments: paymentItems,
             };
         });
 
