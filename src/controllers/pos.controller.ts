@@ -29,6 +29,7 @@ import {
     findGlAccountByCode,
     getCogsGlAccountId,
     getInventoryGlAccountId,
+    getAdminFeeGlAccountId,
 } from "@/repositories/gl-account.repository";
 import { resolveBranchId, resolveBranchCode, resolveBranchCodeFromId } from "@/helpers/branch.helper";
 
@@ -422,6 +423,11 @@ export async function checkout(req: Request, res: Response) {
                 amount: number;
                 methodName: string;
             }> = [];
+            const feeCreditEntries: Array<{
+                glAccountId: string;
+                amount: number;
+                methodName: string;
+            }> = [];
             let totalArReduction = 0;
             let totalRoundAmount = 0;
 
@@ -430,11 +436,19 @@ export async function checkout(req: Request, res: Response) {
                 if (itemAmount <= 0) continue;
                 const activeMethodName = item.method;
 
-                // Cap the payment to the remaining total (including rounding)
-                // This handles cases where customer pays 51000 for a 50172 bill
-                const totalWithRounding = finalTotalAmount;
-                if (itemAmount > totalWithRounding) {
-                    itemAmount = totalWithRounding;
+                const [method] = await tx
+                    .select()
+                    .from(paymentMethods)
+                    .where(ilike(paymentMethods.name, activeMethodName))
+                    .limit(1);
+
+                // Admin Fee Calculation
+                let feeAmount = 0;
+                if (item.feeAmount !== undefined && item.feeAmount !== null && Number(item.feeAmount) >= 0) {
+                    feeAmount = Number(item.feeAmount);
+                } else if (method && Number(method.feePercentage) > 0) {
+                    const feePct = Number(method.feePercentage);
+                    feeAmount = Math.round((itemAmount * feePct) / (100 + feePct));
                 }
 
                 // Create Payment Record
@@ -446,6 +460,7 @@ export async function checkout(req: Request, res: Response) {
                         date: paymentDate,
                         type: "receivable",
                         totalAmount: itemAmount,
+                        feeAmount: feeAmount,
                         status: "posted",
                         reference: activeMethodName,
                         posSessionId,
@@ -455,21 +470,15 @@ export async function checkout(req: Request, res: Response) {
                 // Record Payment Account (Ledger hit)
                 let glAccountId: string | null = null;
 
-                const [method] = await tx
-                    .select()
-                    .from(paymentMethods)
-                    .where(ilike(paymentMethods.name, activeMethodName))
-                    .limit(1);
-
                 // Link Payment to Invoice
                 // Calculate how much of this payment goes to reducing the AR
-                let arReduction = itemAmount;
+                let arReduction = Math.max(0, itemAmount - feeAmount);
                 let roundAmount = 0;
 
                 if (globalSettings?.posRound2Digit && method?.isCash) {
                     // Apply rounding logic to the AR reduction vs actual cash received
                     roundAmount = roundingDifference;
-                    arReduction = itemAmount - roundingDifference;
+                    arReduction = Math.max(0, arReduction - roundingDifference);
                 }
 
                 totalArReduction += arReduction;
@@ -525,6 +534,17 @@ export async function checkout(req: Request, res: Response) {
                         methodName: activeMethodName,
                     });
                 }
+
+                if (feeAmount > 0) {
+                    const feeGlId = await getAdminFeeGlAccountId(method?.feeGlAccountId, tx);
+                    if (feeGlId) {
+                        feeCreditEntries.push({
+                            glAccountId: feeGlId,
+                            amount: feeAmount,
+                            methodName: activeMethodName,
+                        });
+                    }
+                }
             }
 
             // Create ONE Consolidated Payment Journal if there are payments
@@ -567,7 +587,18 @@ export async function checkout(req: Request, res: Response) {
                     });
                 }
 
-                // 3. Cr/Dr Rounding Difference if applicable
+                // 3. Cr Admin Fee Revenue
+                for (const feeEntry of feeCreditEntries) {
+                    await tx.insert(journalEntries).values({
+                        journalId: paymentJournal.id,
+                        glAccountId: feeEntry.glAccountId,
+                        debit: 0,
+                        credit: feeEntry.amount,
+                        note: `Biaya Layanan Admin (${feeEntry.methodName}) ${transaction.invoice}`,
+                    });
+                }
+
+                // 4. Cr/Dr Rounding Difference if applicable
                 if (totalRoundAmount !== 0 && globalSettings?.roundingDifferenceGlAccountId) {
                     await tx.insert(journalEntries).values({
                         journalId: paymentJournal.id,

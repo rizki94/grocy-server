@@ -36,6 +36,7 @@ export const payments = pgTable("payments", {
     date: date("date").notNull(),
     type: text("type", { enum: ["receivable", "payable"] }).notNull(),
     totalAmount: decimalAsNumber(12, 2)("total_amount").notNull().default(0),
+    feeAmount: decimalAsNumber(12, 2)("fee_amount").notNull().default(0),
     status: text("status", { enum: ["draft", "posted", "cancelled"] })
         .notNull()
         .default("draft"),

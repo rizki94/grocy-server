@@ -1,6 +1,7 @@
 import { pgTable, text, timestamp, uuid, boolean } from "drizzle-orm/pg-core";
 import { glAccounts } from "./gl-account.schema";
 import { relations } from "drizzle-orm";
+import { decimalAsNumber } from "@/types/decimal-as-number";
 
 export const paymentMethods = pgTable("payment_methods", {
     id: uuid("id").defaultRandom().primaryKey(),
@@ -9,6 +10,8 @@ export const paymentMethods = pgTable("payment_methods", {
     icon: text("icon"), // Icon identifier or name
     isCash: boolean("is_cash").default(false).notNull(),
     glAccountId: uuid("gl_account_id").references(() => glAccounts.id),
+    feePercentage: decimalAsNumber(5, 2)("fee_percentage").default(0).notNull(),
+    feeGlAccountId: uuid("fee_gl_account_id").references(() => glAccounts.id),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
         .defaultNow()
@@ -19,6 +22,10 @@ export const paymentMethods = pgTable("payment_methods", {
 export const paymentMethodsRelations = relations(paymentMethods, ({ one }) => ({
     glAccount: one(glAccounts, {
         fields: [paymentMethods.glAccountId],
+        references: [glAccounts.id],
+    }),
+    feeGlAccount: one(glAccounts, {
+        fields: [paymentMethods.feeGlAccountId],
         references: [glAccounts.id],
     }),
 }));

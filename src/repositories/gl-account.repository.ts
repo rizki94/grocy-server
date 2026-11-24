@@ -143,3 +143,34 @@ export async function getAccountBalance(glAccountId: string) {
         return Number(result.credit) - Number(result.debit);
     }
 }
+
+export async function getAdminFeeGlAccountId(specificGlId?: string | null, tx?: any) {
+    if (specificGlId) return specificGlId;
+    const dbClient = tx || db;
+    try {
+        const [feeByName] = await dbClient
+            .select({ id: glAccounts.id })
+            .from(glAccounts)
+            .where(
+                and(
+                    eq(glAccounts.type, "income"),
+                    or(
+                        ilike(glAccounts.name, "%admin%"),
+                        ilike(glAccounts.name, "%fee%"),
+                        ilike(glAccounts.name, "%layanan%"),
+                        ilike(glAccounts.name, "%pendapatan lain%"),
+                    ),
+                ),
+            )
+            .limit(1);
+        if (feeByName?.id) return feeByName.id;
+    } catch {}
+
+    const direct4800 = await findGlAccountByCode("4800");
+    if (direct4800) return direct4800;
+
+    const direct4900 = await findGlAccountByCode("4900");
+    if (direct4900) return direct4900;
+
+    return null;
+}
