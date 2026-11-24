@@ -454,9 +454,9 @@ export const importProducts = async (req: Request, res: Response) => {
         }
 
         const createdIds: string[] = [];
-        const globalPriceBranchId = await getHqBranchId();
 
         await db.transaction(async (tx) => {
+            const globalPriceBranchId = await getHqBranchId(tx);
             for (const [productName, detailRows] of grouped) {
                 detailRows.sort((a, b) => a.level - b.level);
                 const firstRow = detailRows[0];

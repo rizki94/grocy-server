@@ -14,6 +14,8 @@ import {
     PERMISSION_GROUPS,
     ALL_PERMISSIONS,
 } from "@/constants/permissions.constant";
+import { clearHqBranchCache } from "@/helpers/branch.helper";
+import { CacheService } from "@/services/cache-service";
 
 export interface TenantContext {
     dbName: string;
@@ -78,6 +80,8 @@ function getMasterPool(): Pool {
  */
 export async function closeTenantPool(dbName: string): Promise<void> {
     const cleanName = sanitizeDatabaseName(dbName);
+    clearHqBranchCache(cleanName);
+    await CacheService.clearTenant(cleanName);
     if (poolCache.has(cleanName)) {
         const item = poolCache.get(cleanName);
         poolCache.delete(cleanName);
@@ -93,6 +97,8 @@ export async function closeTenantPool(dbName: string): Promise<void> {
  * Graceful shutdown: close all tenant pools and master pool
  */
 export async function closeAllTenantPools(): Promise<void> {
+    clearHqBranchCache();
+    await CacheService.clearTenant();
     for (const [name, item] of poolCache.entries()) {
         try {
             await item.pool.end();

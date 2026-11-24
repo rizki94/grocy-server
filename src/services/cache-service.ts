@@ -1,3 +1,5 @@
+import { tenantStorage } from "@/services/tenant.service";
+
 type CacheEntry = {
     value: string;
     expiry: number;
@@ -6,12 +8,18 @@ type CacheEntry = {
 const cache = new Map<string, CacheEntry>();
 
 export class CacheService {
+    private static getScopedKey(key: string): string {
+        const tenantDb = tenantStorage.getStore()?.dbName || "default";
+        return `${tenantDb}:${key}`;
+    }
+
     static async get<T>(key: string): Promise<T | null> {
-        const entry = cache.get(key);
+        const scopedKey = this.getScopedKey(key);
+        const entry = cache.get(scopedKey);
         if (!entry) return null;
 
         if (Date.now() > entry.expiry) {
-            cache.delete(key);
+            cache.delete(scopedKey);
             return null;
         }
 
@@ -19,24 +27,32 @@ export class CacheService {
     }
 
     static async set<T>(key: string, value: T, ttlSeconds = 60): Promise<void> {
+        const scopedKey = this.getScopedKey(key);
         const expiry = Date.now() + ttlSeconds * 1000;
-        cache.set(key, { value: JSON.stringify(value), expiry });
+        cache.set(scopedKey, { value: JSON.stringify(value), expiry });
     }
 
     static async del(key: string): Promise<void> {
-        cache.delete(key);
+        const scopedKey = this.getScopedKey(key);
+        cache.delete(scopedKey);
     }
 
     static async delByPrefix(prefix: string): Promise<void> {
-        // Original implementation looked for `cache:${prefix}*`
-        // Since we are moving to in-memory and want to keep behavior consistent (or fix it),
-        // we'll search for keys starting with the prefix.
-        // If the original intent was `cache:` namespace, we might need to adjust,
-        // but based on usage seen, strict prefix matching on the key itself is likely what's needed or at least safe.
-        // Using strict prefix matching on the key:
-        for (const key of cache.keys()) {
-            if (key.startsWith(prefix)) {
-                cache.delete(key);
+        const tenantDb = tenantStorage.getStore()?.dbName || "default";
+        const scopedPrefix = `${tenantDb}:${prefix}`;
+        for (const k of cache.keys()) {
+            if (k.startsWith(scopedPrefix)) {
+                cache.delete(k);
+            }
+        }
+    }
+
+    static async clearTenant(dbName?: string): Promise<void> {
+        const tenantDb = dbName || tenantStorage.getStore()?.dbName || "default";
+        const prefix = `${tenantDb}:`;
+        for (const k of cache.keys()) {
+            if (k.startsWith(prefix)) {
+                cache.delete(k);
             }
         }
     }

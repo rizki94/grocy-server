@@ -1170,37 +1170,39 @@ export const quickUpdatePrice = async (req: Request, res: Response) => {
             });
         }
 
-        const globalPriceBranchId = await getHqBranchId();
+        await db.transaction(async (tx) => {
+            const globalPriceBranchId = await getHqBranchId(tx);
 
-        for (const item of prices) {
-            const [existing] = await db
-                .select()
-                .from(productDetailPrices)
-                .where(
-                    and(
-                        eq(
-                            productDetailPrices.productDetailId,
-                            item.productDetailId,
+            for (const item of prices) {
+                const [existing] = await tx
+                    .select()
+                    .from(productDetailPrices)
+                    .where(
+                        and(
+                            eq(
+                                productDetailPrices.productDetailId,
+                                item.productDetailId,
+                            ),
+                            eq(productDetailPrices.priceGroupId, item.priceGroupId),
                         ),
-                        eq(productDetailPrices.priceGroupId, item.priceGroupId),
-                    ),
-                )
-                .limit(1);
+                    )
+                    .limit(1);
 
-            if (existing) {
-                await db
-                    .update(productDetailPrices)
-                    .set({ price: item.price })
-                    .where(eq(productDetailPrices.id, existing.id));
-            } else {
-                await db.insert(productDetailPrices).values({
-                    productDetailId: item.productDetailId,
-                    priceGroupId: item.priceGroupId,
-                    branchId: globalPriceBranchId,
-                    price: item.price,
-                });
+                if (existing) {
+                    await tx
+                        .update(productDetailPrices)
+                        .set({ price: item.price })
+                        .where(eq(productDetailPrices.id, existing.id));
+                } else {
+                    await tx.insert(productDetailPrices).values({
+                        productDetailId: item.productDetailId,
+                        priceGroupId: item.priceGroupId,
+                        branchId: globalPriceBranchId,
+                        price: item.price,
+                    });
+                }
             }
-        }
+        });
 
         await CacheService.del("products:all");
         await CacheService.del("products:active");
