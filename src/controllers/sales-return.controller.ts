@@ -406,12 +406,8 @@ export const postSalesReturn = async (req: Request, res: Response) => {
             const salesReturnGl = (await findGlAccountByCode("4200")) || (await findGlAccountByCode(revenueGlCode));
             const arGl = (await findGlAccountByCode(arGlCode)) || (await findGlAccountByCode("1200"));
             const taxGl = (await findGlAccountByCode(taxGlCode)) || (await findGlAccountByCode("2200")) || (await findGlAccountByCode("2150"));
-            const inventoryGl =
-                (await getInventoryGlAccountId(tx)) ||
-                (await findGlAccountByCode("1400"));
-            const cogsGl =
-                (await getCogsGlAccountId(tx)) ||
-                (await findGlAccountByCode("5100"));
+            const inventoryGl = await getInventoryGlAccountId(tx);
+            const cogsGl = await getCogsGlAccountId(tx);
 
             if (netRevenue > 0 && salesReturnGl) {
                 await tx.insert(journalEntries).values({

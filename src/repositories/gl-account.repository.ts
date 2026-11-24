@@ -27,9 +27,6 @@ export async function getCogsGlAccountId(tx?: any) {
         if (st?.id) return st.id;
     } catch {}
 
-    const direct5100 = await findGlAccountByCode("5100");
-    if (direct5100) return direct5100;
-
     const [cogsByName] = await dbClient
         .select({ id: glAccounts.id })
         .from(glAccounts)
@@ -44,12 +41,24 @@ export async function getCogsGlAccountId(tx?: any) {
             ),
         )
         .limit(1);
+    if (cogsByName?.id) return cogsByName.id;
 
-    return cogsByName?.id || null;
+    const direct5100 = await findGlAccountByCode("5100");
+    if (direct5100) return direct5100;
+
+    return null;
 }
 
 export async function getInventoryGlAccountId(tx?: any) {
     const dbClient = tx || db;
+    try {
+        const [st] = await dbClient
+            .select({ id: settings.inventoryGlAccountId })
+            .from(settings)
+            .limit(1);
+        if (st?.id) return st.id;
+    } catch {}
+
     try {
         const [purchaseMap] = await dbClient
             .select()
@@ -67,9 +76,6 @@ export async function getInventoryGlAccountId(tx?: any) {
         }
     } catch {}
 
-    const direct1400 = await findGlAccountByCode("1400");
-    if (direct1400) return direct1400;
-
     const [invByName] = await dbClient
         .select({ id: glAccounts.id })
         .from(glAccounts)
@@ -83,8 +89,12 @@ export async function getInventoryGlAccountId(tx?: any) {
             ),
         )
         .limit(1);
+    if (invByName?.id) return invByName.id;
 
-    return invByName?.id || null;
+    const direct1400 = await findGlAccountByCode("1400");
+    if (direct1400) return direct1400;
+
+    return null;
 }
 
 export async function findLeafGlAccounts() {

@@ -764,7 +764,7 @@ export async function provisionWorkspace(params: WorkspaceProvisionParams) {
         const [defaultShift] = await tenantDb
             .insert(schema.workShifts)
             .values({
-                name: "Shift Reguler (08:00 - 17:00)",
+                name: "Shift Reguler",
                 startTime: "08:00",
                 endTime: "17:00",
                 isActive: true,
@@ -826,19 +826,6 @@ export async function provisionWorkspace(params: WorkspaceProvisionParams) {
                     isActive: true,
                 })
                 .returning();
-            await tenantDb.insert(schema.priceGroups).values([
-                { name: "Grosir", description: "Harga Grosir", isActive: true },
-                {
-                    name: "Member Silver",
-                    description: "Tier Silver",
-                    isActive: true,
-                },
-                {
-                    name: "Member Gold",
-                    description: "Tier Gold",
-                    isActive: true,
-                },
-            ]);
 
             // Standard Payment Methods (linked with GL accounts)
             await tenantDb.insert(schema.paymentMethods).values([
@@ -848,20 +835,6 @@ export async function provisionWorkspace(params: WorkspaceProvisionParams) {
                     icon: "Banknote",
                     isCash: true,
                     glAccountId: cashGl?.id || null,
-                },
-                {
-                    name: "Transfer Bank BCA",
-                    color: "#2563eb",
-                    icon: "CreditCard",
-                    isCash: false,
-                    glAccountId: bankGl?.id || null,
-                },
-                {
-                    name: "Transfer Bank Mandiri",
-                    color: "#0284c7",
-                    icon: "CreditCard",
-                    isCash: false,
-                    glAccountId: bankGl?.id || null,
                 },
                 {
                     name: "QRIS",
@@ -927,9 +900,9 @@ export async function provisionWorkspace(params: WorkspaceProvisionParams) {
                     glAccountId: cashGl?.id || null,
                 },
                 {
-                    name: "Transfer Bank",
-                    color: "#2563eb",
-                    icon: "CreditCard",
+                    name: "QRIS",
+                    color: "#9333ea",
+                    icon: "QrCode",
                     isCash: false,
                     glAccountId: bankGl?.id || null,
                 },
@@ -1255,7 +1228,7 @@ export async function ensureEssentialTenantData(
             }
         }
 
-        // 3. Resolve GL accounts for Settings (COGS, Retained Earnings, Rounding Diff)
+        // 3. Resolve GL accounts for Settings (COGS, Inventory, Retained Earnings, Rounding Diff)
         let cogsGlId: string | null = null;
         if (maps.cogsCode?.trim()) {
             const [cogsGl] = await tenantDb
@@ -1264,6 +1237,16 @@ export async function ensureEssentialTenantData(
                 .where(eq(schema.glAccounts.code, maps.cogsCode.trim()))
                 .limit(1);
             if (cogsGl) cogsGlId = cogsGl.id;
+        }
+
+        let inventoryGlId: string | null = null;
+        if (maps.inventoryCode?.trim()) {
+            const [invGl] = await tenantDb
+                .select()
+                .from(schema.glAccounts)
+                .where(eq(schema.glAccounts.code, maps.inventoryCode.trim()))
+                .limit(1);
+            if (invGl) inventoryGlId = invGl.id;
         }
 
         // Retained Earnings (Equity account)
@@ -1285,6 +1268,7 @@ export async function ensureEssentialTenantData(
             .update(schema.settings)
             .set({
                 cogsGlAccountId: cogsGlId,
+                inventoryGlAccountId: inventoryGlId,
                 retainedEarningsGlAccountId: retainedGl?.id || null,
                 roundingDifferenceGlAccountId: roundGl?.id || null,
             })

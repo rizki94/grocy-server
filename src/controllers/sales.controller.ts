@@ -502,12 +502,8 @@ export const postSales = async (req: Request, res: Response) => {
             );
 
             if (totalCogs > 0) {
-                const cogsGlId =
-                    (await getCogsGlAccountId(tx)) ||
-                    (await findGlAccountByCode("5100"));
-                const invGlId =
-                    (await getInventoryGlAccountId(tx)) ||
-                    (await findGlAccountByCode("1400"));
+                const cogsGlId = await getCogsGlAccountId(tx);
+                const invGlId = await getInventoryGlAccountId(tx);
 
                 if (cogsGlId) {
                     await tx.insert(journalEntries).values({
@@ -944,12 +940,8 @@ export const cancelSales = async (req: Request, res: Response) => {
             );
 
             if (totalCogs > 0) {
-                const invGl =
-                    (await getInventoryGlAccountId(tx)) ||
-                    (await findGlAccountByCode("1400"));
-                const cogsGl =
-                    (await getCogsGlAccountId(tx)) ||
-                    (await findGlAccountByCode("5100"));
+                const invGl = await getInventoryGlAccountId(tx);
+                const cogsGl = await getCogsGlAccountId(tx);
                 if (invGl) {
                     // Dr Inventory (1400)
                     await tx.insert(journalEntries).values({

@@ -48,6 +48,7 @@ export const settings = pgTable("settings", {
     closingDate: date("closing_date"),
     retainedEarningsGlAccountId: uuid("retained_earnings_gl_account_id").references(() => glAccounts.id),
     cogsGlAccountId: uuid("cogs_gl_account_id").references(() => glAccounts.id),
+    inventoryGlAccountId: uuid("inventory_gl_account_id").references(() => glAccounts.id),
     closingJournalPrefix: text("closing_journal_prefix").default("CLS").notNull(),
     printLayouts: jsonb("print_layouts"),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -64,6 +65,10 @@ export const settingsRelations = relations(settings, ({ one }) => ({
     }),
     cogsGlAccount: one(glAccounts, {
         fields: [settings.cogsGlAccountId],
+        references: [glAccounts.id],
+    }),
+    inventoryGlAccount: one(glAccounts, {
+        fields: [settings.inventoryGlAccountId],
         references: [glAccounts.id],
     }),
 }));

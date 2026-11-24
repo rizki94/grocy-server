@@ -1144,13 +1144,8 @@ export async function reconcileDataIntegrity(req: Request, res: Response) {
                             );
 
                             if (totalCogs > 0) {
-                                const cogsGlId =
-                                    (await getCogsGlAccountId(tx)) ||
-                                    (await findGlAccountId("5100", tx));
-                                const invGlId =
-                                    (await getInventoryGlAccountId(tx)) ||
-                                    (await findGlAccountId("1400", tx)) ||
-                                    (await findGlAccountId("1410", tx));
+                                const cogsGlId = await getCogsGlAccountId(tx);
+                                const invGlId = await getInventoryGlAccountId(tx);
 
                                 if (trx.type === "sales" || trx.type === "pos_sales") {
                                     if (cogsGlId) {

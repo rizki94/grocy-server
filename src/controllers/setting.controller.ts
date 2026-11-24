@@ -57,6 +57,8 @@ export const updateSettings = async (req: Request, res: Response) => {
             posJournalPrefix,
             closingJournalPrefix,
             retainedEarningsGlAccountId,
+            cogsGlAccountId,
+            inventoryGlAccountId,
             closingDate,
             printLayouts,
         } = req.body;
@@ -105,6 +107,8 @@ export const updateSettings = async (req: Request, res: Response) => {
             posJournalPrefix: posJournalPrefix ? posJournalPrefix.trim().toUpperCase() : "POS",
             closingJournalPrefix: closingJournalPrefix ? closingJournalPrefix.trim().toUpperCase() : "CLS",
             retainedEarningsGlAccountId: retainedEarningsGlAccountId ? retainedEarningsGlAccountId : null,
+            cogsGlAccountId: cogsGlAccountId ? cogsGlAccountId : null,
+            inventoryGlAccountId: inventoryGlAccountId ? inventoryGlAccountId : null,
             ...(closingDate !== undefined ? { closingDate: closingDate || null } : {}),
             ...(printLayouts !== undefined ? { printLayouts } : {}),
             updatedAt: new Date(),

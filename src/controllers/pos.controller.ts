@@ -367,12 +367,8 @@ export async function checkout(req: Request, res: Response) {
             );
 
             if (totalCogs > 0) {
-                const cogsGlId =
-                    (await getCogsGlAccountId(tx)) ||
-                    (await findGlAccountByCode("5100"));
-                const invGlId =
-                    (await getInventoryGlAccountId(tx)) ||
-                    (await findGlAccountByCode("1400"));
+                const cogsGlId = await getCogsGlAccountId(tx);
+                const invGlId = await getInventoryGlAccountId(tx);
 
                 if (cogsGlId) {
                     await tx.insert(journalEntries).values({
