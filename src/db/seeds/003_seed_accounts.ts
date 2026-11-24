@@ -1,6 +1,7 @@
 import bcrypt from "bcrypt";
 import { db } from "..";
 import { eq, and } from "drizzle-orm";
+import { CASHIER_PERMISSION_CODES } from "../../constants/permissions.constant";
 import {
     users,
     roles,
@@ -65,6 +66,11 @@ export async function seedAccounts(dbInstance: typeof db) {
         roles,
         eq(roles.name, "super_admin"),
         { name: "super_admin" },
+    );
+    const cashierRole = await getOrCreate<typeof roles.$inferSelect>(
+        roles,
+        eq(roles.name, "cashier"),
+        { name: "cashier" },
     );
 
     // 3. Permission Groups & Permissions
@@ -292,6 +298,25 @@ export async function seedAccounts(dbInstance: typeof db) {
                 hasPermission: true,
             },
         );
+    }
+
+    // 4b. Assign cashier permissions to cashier role
+    for (const code of CASHIER_PERMISSION_CODES) {
+        const p = insertedPermissions.find((perm) => perm.code === code);
+        if (p) {
+            await getOrCreate(
+                rolePermissions,
+                and(
+                    eq(rolePermissions.roleId, cashierRole.id),
+                    eq(rolePermissions.permissionId, p.id),
+                ),
+                {
+                    roleId: cashierRole.id,
+                    permissionId: p.id,
+                    hasPermission: true,
+                },
+            );
+        }
     }
 
     // 5. Warehouses

@@ -153,6 +153,12 @@ export const ALL_PERMISSIONS: PermissionDef[] = [
 
     // POS
     { code: "pos.interface.view", description: "View POS Interface", group: "pos" },
+    { code: "pos.checkout", description: "Perform POS Checkout", group: "pos" },
+    { code: "pos.session.open", description: "Open POS Session", group: "pos" },
+    { code: "pos.session.close", description: "Close POS Session", group: "pos" },
+    { code: "pos.session.history", description: "View POS Session History", group: "pos" },
+    { code: "pos.receipt.print", description: "Print POS Receipts", group: "pos" },
+    { code: "pos.payment_method.read", description: "Read POS Payment Methods", group: "pos" },
 
     // SysAdmin
     { code: "sysadmin.access", description: "Access System Administration", group: "sysadmin" },
@@ -204,3 +210,28 @@ export const ALL_PERMISSIONS: PermissionDef[] = [
 ];
 
 export const ALL_PERMISSION_CODES: string[] = ALL_PERMISSIONS.map((p) => p.code);
+
+export const CASHIER_PERMISSION_CODES: string[] = [
+    // POS operations
+    "pos.interface.view",
+    "pos.checkout",
+    "pos.session.open",
+    "pos.session.close",
+    "pos.session.history",
+    "pos.receipt.print",
+    "pos.payment_method.read",
+    // Catalog reading
+    "product.view",
+    "product.attribute.view",
+    "settings.unit.view",
+    // Customers
+    "contact.customer.view",
+    "contact.customer.create",
+    // Settings needed by POS
+    "settings.payment_method.view",
+    "settings.tax.view",
+    "settings.warehouse.view",
+    "settings.branch.view",
+    // CRM
+    "crm.view",
+];

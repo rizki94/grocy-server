@@ -1,6 +1,5 @@
 import { Router } from "express";
 import { isAuthenticated } from "./middleware/auth";
-import { pinSessionGuard } from "./middleware/pin-guard";
 import authRouter from "./routes/auth.route";
 import logsRouter from "./routes/log.route";
 import customerRouter from "./routes/customer.route";
@@ -81,41 +80,18 @@ route.get("/me", (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
 
     const { password, ...safeUser } = req.user as any;
-    const isPinSession = (req.session as any)?.isPinSession === true;
-
-    if (isPinSession) {
-        return res.json({
-            user: {
-                ...safeUser,
-                name: (req.session as any)?.employeeName || safeUser.name,
-                displayName: (req.session as any)?.employeeName || safeUser.displayName,
-                employeeId: (req.session as any)?.employeeId || safeUser.employeeId,
-                role: "Kasir (PIN)",
-                role_name: "Kasir (PIN)",
-                isSuperAdmin: false,
-                isPinSession: true,
-                permissions: [
-                    "pos.interface.view",
-                    "pos.checkout",
-                    "pos.session.open",
-                    "pos.session.close",
-                    "pos.session.history",
-                    "pos.product.read",
-                    "pos.customer.read",
-                    "pos.receipt.print",
-                    "pos.payment_method.read",
-                ],
-            },
-        });
-    }
+    const employeeName = (req.session as any)?.employeeName;
+    const employeeId = (req.session as any)?.employeeId;
 
     res.json({
-        user: safeUser,
+        user: {
+            ...safeUser,
+            name: employeeName || safeUser.name,
+            displayName: employeeName || safeUser.displayName,
+            employeeId: employeeId || safeUser.employeeId,
+        },
     });
 });
-
-// Guard: Sesi PIN Kasir DITOLAK dari semua API Administrasi & Manajemen
-route.use(pinSessionGuard);
 
 route.use("/dashboard", dashboardRouter);
 route.use("/logs", logsRouter);

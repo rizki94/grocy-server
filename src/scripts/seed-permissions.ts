@@ -5,7 +5,7 @@ dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 import { db } from "../db";
 import { roles, permissions, permissionGroups, rolePermissions, users } from "../db/schemas";
 import { eq, and } from "drizzle-orm";
-import { PERMISSION_GROUPS, ALL_PERMISSIONS } from "../constants/permissions.constant";
+import { PERMISSION_GROUPS, ALL_PERMISSIONS, CASHIER_PERMISSION_CODES } from "../constants/permissions.constant";
 
 async function main() {
     console.log("Seeding permissions and assigning to super_admin...");
@@ -89,6 +89,31 @@ async function main() {
         assignedCount++;
     }
     console.log(`Assigned ${assignedCount} permissions to super_admin`);
+
+    // 4b. Assign CASHIER permissions to role 'cashier'
+    const cashierRole = rolesMap["cashier"];
+    if (cashierRole) {
+        let cashierAssignedCount = 0;
+        for (const code of CASHIER_PERMISSION_CODES) {
+            const p = insertedPermissions.find((perm) => perm.code === code);
+            if (p) {
+                await getOrCreate(
+                    rolePermissions,
+                    and(
+                        eq(rolePermissions.roleId, cashierRole.id),
+                        eq(rolePermissions.permissionId, p.id),
+                    ),
+                    {
+                        roleId: cashierRole.id,
+                        permissionId: p.id,
+                        hasPermission: true,
+                    },
+                );
+                cashierAssignedCount++;
+            }
+        }
+        console.log(`Assigned ${cashierAssignedCount} permissions to cashier role`);
+    }
 
     // 5. Ensure any user with username 'admin' or 'super_admin' or 'rizky' has roleId set to super_admin if not set
     const candidates = ["admin", "super_admin", "rizky"];

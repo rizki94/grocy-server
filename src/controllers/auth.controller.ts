@@ -2,7 +2,7 @@ import { db } from "@/db";
 import { permissions } from "@/db/schemas/permission.schema";
 import { rolePermissions } from "@/db/schemas/role-permission.schema";
 import { sessions, users, roles, employees } from "@/db/schemas";
-import { ALL_PERMISSION_CODES } from "@/constants/permissions.constant";
+import { ALL_PERMISSION_CODES, CASHIER_PERMISSION_CODES } from "@/constants/permissions.constant";
 import { logAction } from "@/utils/log-helper";
 import { UserModel } from "@/validators/user.validator";
 import {
@@ -13,6 +13,7 @@ import {
 import type { NextFunction, Request, Response } from "express";
 import passport from "passport";
 import jwt from "jsonwebtoken";
+import bcrypt from "bcrypt";
 import { and, eq, gt, ne, sql } from "drizzle-orm";
 
 export const login = async (
@@ -396,34 +397,110 @@ export const loginPinNative = async (req: Request, res: Response) => {
             return res.status(401).json({ status: 401, message: "PIN kasir / karyawan tidak valid" });
         }
 
-        // Find user with pos setup (cashGlAccountId & posWarehouseId) matching branch or default
-        let user = await db
+        // 1. Ensure cashier role exists in database
+        const [cashierRole] = await db
             .select()
-            .from(users)
-            .where(and(sql`${users.cashGlAccountId} IS NOT NULL`, sql`${users.posWarehouseId} IS NOT NULL`))
-            .limit(1)
-            .then(r => r[0]);
+            .from(roles)
+            .where(eq(roles.name, "cashier"))
+            .limit(1);
+
+        if (!cashierRole) {
+            return res.status(500).json({ status: 500, message: "Role kasir belum terkonfigurasi di sistem" });
+        }
+
+        // 2. Resolve or provision dedicated Cashier User account
+        let user: typeof users.$inferSelect | null = null;
+
+        if (employee.userId) {
+            [user] = await db
+                .select()
+                .from(users)
+                .where(eq(users.id, employee.userId))
+                .limit(1);
+        }
+
+        const cashierUsername = `cashier_${employee.nik.toLowerCase().replace(/[^a-z0-9]/g, "_")}`;
 
         if (!user) {
-            user = await db.select().from(users).limit(1).then(r => r[0]);
+            [user] = await db
+                .select()
+                .from(users)
+                .where(eq(users.username, cashierUsername))
+                .limit(1);
         }
 
         if (!user) {
-            return res.status(400).json({ status: 400, message: "User sistem belum dikonfigurasi" });
+            // Find existing user with POS configuration to copy defaults (cashGlAccountId, posWarehouseId)
+            const [posTemplate] = await db
+                .select()
+                .from(users)
+                .where(and(sql`${users.cashGlAccountId} IS NOT NULL`, sql`${users.posWarehouseId} IS NOT NULL`))
+                .limit(1);
+
+            const branchId = employee.branchId || posTemplate?.branchId;
+            if (!branchId) {
+                return res.status(400).json({ status: 400, message: "Cabang belum dikonfigurasi untuk kasir" });
+            }
+
+            const hashedPassword = await bcrypt.hash(pin.trim(), 10);
+            const [newUser] = await db
+                .insert(users)
+                .values({
+                    username: cashierUsername,
+                    displayName: employee.fullName,
+                    password: hashedPassword,
+                    roleId: cashierRole.id,
+                    branchId,
+                    cashGlAccountId: posTemplate?.cashGlAccountId || null,
+                    posWarehouseId: posTemplate?.posWarehouseId || null,
+                    isActive: true,
+                })
+                .returning();
+
+            user = newUser;
+            await db
+                .update(employees)
+                .set({ userId: user.id })
+                .where(eq(employees.id, employee.id));
         }
 
-        const token = jwt.sign(
-            { id: user.id, username: user.username, employeeId: employee.id, isPinSession: true },
-            process.env.JWT_SECRET || "secret",
-            { expiresIn: "12h" }
+        // Fetch permissions assigned to cashier role
+        const rolePermRows = await db
+            .select({ code: permissions.code })
+            .from(rolePermissions)
+            .innerJoin(permissions, eq(rolePermissions.permissionId, permissions.id))
+            .where(
+                and(
+                    eq(rolePermissions.roleId, user.roleId),
+                    eq(rolePermissions.hasPermission, true),
+                ),
+            );
+
+        const activePermissions = Array.from(
+            new Set([
+                ...rolePermRows.map((r) => r.code),
+                ...CASHIER_PERMISSION_CODES,
+            ]),
         );
 
-        // If running in session context (web browser), authenticate passport session marked strictly as PIN/Cashier
+        const token = jwt.sign(
+            {
+                id: user.id,
+                username: user.username,
+                employeeId: employee.id,
+                role: "cashier",
+                isSuperAdmin: false,
+            },
+            process.env.JWT_SECRET || "secret",
+            { expiresIn: "12h" },
+        );
+
+        // Passport session for web browser
         if (typeof req.logIn === "function") {
             await new Promise<void>((resolve) => {
                 req.logIn(user, () => {
                     if (req.session) {
-                        (req.session as any).isPinSession = true;
+                        delete (req.session as any).isPinSession;
                         (req.session as any).employeeId = employee.id;
                         (req.session as any).employeeName = employee.fullName;
                         if (typeof req.session.save === "function") {
@@ -438,19 +515,6 @@ export const loginPinNative = async (req: Request, res: Response) => {
             });
         }
 
-        // Cashier PIN session is strictly restricted to POS operations (NO ADMIN ACCESS)
-        const allowedPermissions = [
-            "pos.interface.view",
-            "pos.checkout",
-            "pos.session.open",
-            "pos.session.close",
-            "pos.session.history",
-            "pos.product.read",
-            "pos.customer.read",
-            "pos.receipt.print",
-            "pos.payment_method.read",
-        ];
-
         return res.status(200).json({
             status: 200,
             message: "Login PIN berhasil",
@@ -462,14 +526,13 @@ export const loginPinNative = async (req: Request, res: Response) => {
                 displayName: employee.fullName,
                 employeeId: employee.id,
                 department: employee.department,
-                role: "Kasir (PIN)",
-                role_name: "Kasir (PIN)",
+                role: "cashier",
+                role_name: "Kasir",
                 branchId: employee.branchId || user.branchId,
                 isSuperAdmin: false,
-                isPinSession: true,
-                permissions: allowedPermissions,
+                permissions: activePermissions,
             },
-            permission: allowedPermissions,
+            permission: activePermissions,
         });
     } catch (err: any) {
         console.error("loginPinNative error:", err);
