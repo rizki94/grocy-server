@@ -113,7 +113,10 @@ export async function closeAllTenantPools(): Promise<void> {
 export function getTenantDb(dbName?: string): NodePgDatabase<typeof schema> {
     const store = tenantStorage.getStore();
     // Fast-path: if current async context already has the requested tenant db, return it directly
-    if (store?.db && (!dbName || sanitizeDatabaseName(dbName) === store.dbName)) {
+    if (
+        store?.db &&
+        (!dbName || sanitizeDatabaseName(dbName) === store.dbName)
+    ) {
         return store.db;
     }
 
@@ -367,7 +370,9 @@ export async function getTenantSubscriptionStatus(
                     );
                     if (u) {
                         const expiresAt =
-                            u.expiresAt !== undefined ? u.expiresAt : t.expiresAt;
+                            u.expiresAt !== undefined
+                                ? u.expiresAt
+                                : t.expiresAt;
                         const isLifetime = !expiresAt;
                         let isExpired = false;
                         let daysRemaining = null;
@@ -463,7 +468,8 @@ export async function verifySetupToken(
         if (!res.ok) {
             return {
                 valid: false,
-                error: data?.error || "Token otorisasi setup database tidak valid",
+                error:
+                    data?.error || "Token otorisasi setup database tidak valid",
             };
         }
     } catch {}
@@ -688,7 +694,9 @@ export async function provisionWorkspace(params: WorkspaceProvisionParams) {
 
         // 8b. Seed Initial Company & Print Layout Profile from Setup Token / HQ Branch
         const initialCompanyName =
-            verification.token?.clientName || params.branch.name || "Grocy Store";
+            verification.token?.clientName ||
+            params.branch.name ||
+            "Grocy Store";
         const initialCompanyAddress = params.branch.address || "";
         const initialCompanyPhone = params.branch.phone || "";
 
@@ -728,7 +736,10 @@ export async function provisionWorkspace(params: WorkspaceProvisionParams) {
             .limit(1);
 
         // 9. Create Super Admin User (Linked with posWarehouseId & cashGlAccountId)
-        const hashedPassword = await bcrypt.hash(params.superAdmin.password, 10);
+        const hashedPassword = await bcrypt.hash(
+            params.superAdmin.password,
+            10,
+        );
         const [adminUser] = await tenantDb
             .insert(schema.users)
             .values({
@@ -816,7 +827,11 @@ export async function provisionWorkspace(params: WorkspaceProvisionParams) {
                     description: "Tier Silver",
                     isActive: true,
                 },
-                { name: "Member Gold", description: "Tier Gold", isActive: true },
+                {
+                    name: "Member Gold",
+                    description: "Tier Gold",
+                    isActive: true,
+                },
             ]);
 
             // Standard Payment Methods (linked with GL accounts)
@@ -888,7 +903,9 @@ export async function provisionWorkspace(params: WorkspaceProvisionParams) {
             const [pgCustom] = await tenantDb
                 .insert(schema.priceGroups)
                 .values({
-                    name: params.customData?.priceGroupName?.trim() || "Regular / Umum",
+                    name:
+                        params.customData?.priceGroupName?.trim() ||
+                        "Regular / Umum",
                     description: "Kelompok Harga Awal",
                     isActive: true,
                 })
@@ -915,7 +932,9 @@ export async function provisionWorkspace(params: WorkspaceProvisionParams) {
             // Contacts
             await tenantDb.insert(schema.contacts).values([
                 {
-                    name: params.customData?.customerName?.trim() || "Pelanggan Umum",
+                    name:
+                        params.customData?.customerName?.trim() ||
+                        "Pelanggan Umum",
                     contactType: "customer",
                     priceGroupId: pgCustom.id,
                     routeGroupId: defaultRouteGroup.id,
@@ -926,7 +945,9 @@ export async function provisionWorkspace(params: WorkspaceProvisionParams) {
                     isActive: true,
                 },
                 {
-                    name: params.customData?.supplierName?.trim() || "Pemasok Utama",
+                    name:
+                        params.customData?.supplierName?.trim() ||
+                        "Pemasok Utama",
                     contactType: "supplier",
                     address: "Jl. Pemasok Utama No. 1",
                     phone: "",
@@ -961,7 +982,10 @@ export async function provisionWorkspace(params: WorkspaceProvisionParams) {
             try {
                 await dropDatabase(dbName);
             } catch (cleanupErr) {
-                console.error(`Rollback failed to drop database ${dbName}:`, cleanupErr);
+                console.error(
+                    `Rollback failed to drop database ${dbName}:`,
+                    cleanupErr,
+                );
             }
         }
         throw err;
@@ -1014,8 +1038,7 @@ export async function syncTenantPermissions(
         ...existingPerms,
     ];
 
-    const fallbackGroupId =
-        existingGroups[0]?.id || Object.values(groupMap)[0];
+    const fallbackGroupId = existingGroups[0]?.id || Object.values(groupMap)[0];
     const missingPerms = ALL_PERMISSIONS.filter(
         (p) => !permMap.has(p.code),
     ).map((p) => ({
@@ -1275,7 +1298,7 @@ export async function ensureEssentialTenantData(
     const existingTaxes = await tenantDb.select().from(schema.taxes).limit(1);
     if (existingTaxes.length === 0) {
         await tenantDb.insert(schema.taxes).values({
-            name: "PPN 11%",
+            name: "Regular Tax",
             rate: 11,
         });
     }
