@@ -33,7 +33,12 @@ import {
 } from "drizzle-orm";
 import { PgColumn } from "drizzle-orm/pg-core";
 import { Request, Response } from "express";
-import { findGlAccountByCode } from "@/repositories/gl-account.repository";
+import {
+    findGlAccountByCode,
+    getAccountsPayableGlAccountId,
+    getInventoryGlAccountId,
+    getInputTaxGlAccountId,
+} from "@/repositories/gl-account.repository";
 import { TransactionType } from "@/constants/transaction.constant";
 import { parseTableQuery } from "@/services/table-query";
 import { branchScope, withBranch, resolveBranchId, resolveBranchCode, resolveBranchCodeFromId } from "@/helpers/branch.helper";
@@ -383,9 +388,9 @@ export const postPurchaseReturn = async (req: Request, res: Response) => {
             const apGlCode = purchaseMapping.find((m) => m.side === "credit")?.glAccountCode || "2100";
             const taxGlCode = taxMapping[0]?.glAccountCode || "1500";
 
-            const apGl = (await findGlAccountByCode(apGlCode)) || (await findGlAccountByCode("2100"));
-            const inventoryGl = (await findGlAccountByCode(inventoryGlCode)) || (await findGlAccountByCode("1400"));
-            const taxGl = (await findGlAccountByCode(taxGlCode)) || (await findGlAccountByCode("1500")) || (await findGlAccountByCode("1450"));
+            const apGl = (await findGlAccountByCode(apGlCode, tx)) || (await getAccountsPayableGlAccountId(tx));
+            const inventoryGl = (await findGlAccountByCode(inventoryGlCode, tx)) || (await getInventoryGlAccountId(tx));
+            const taxGl = (await findGlAccountByCode(taxGlCode, tx)) || (await getInputTaxGlAccountId(tx));
 
             if (calcAmount > 0 && apGl) {
                 await tx.insert(journalEntries).values({

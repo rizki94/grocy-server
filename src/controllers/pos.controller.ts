@@ -30,6 +30,7 @@ import {
     getCogsGlAccountId,
     getInventoryGlAccountId,
     getAdminFeeGlAccountId,
+    getAccountsReceivableGlAccountId,
 } from "@/repositories/gl-account.repository";
 import { resolveBranchId, resolveBranchCode, resolveBranchCodeFromId } from "@/helpers/branch.helper";
 
@@ -583,7 +584,7 @@ export async function checkout(req: Request, res: Response) {
                 }
 
                 // 2. Cr Receivable for total AR reduction
-                const receivableAcc = await findGlAccountByCode("1300");
+                const receivableAcc = await getAccountsReceivableGlAccountId(tx);
                 if (receivableAcc && totalArReduction > 0) {
                     await tx.insert(journalEntries).values({
                         journalId: paymentJournal.id,
@@ -906,7 +907,7 @@ export async function settlePosInvoice(req: Request, res: Response) {
                     note: `Penerimaan Pelunasan ${activeMethodName} ${transaction?.invoice || ""}`,
                 });
 
-                const receivableAcc = await findGlAccountByCode("1300");
+                const receivableAcc = await getAccountsReceivableGlAccountId(tx);
                 if (receivableAcc) {
                     await tx.insert(journalEntries).values({
                         journalId: paymentJournal.id,

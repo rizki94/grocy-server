@@ -37,6 +37,10 @@ import {
     findGlAccountByCode,
     getCogsGlAccountId,
     getInventoryGlAccountId,
+    getAccountsReceivableGlAccountId,
+    getSalesRevenueGlAccountId,
+    getOutputTaxGlAccountId,
+    getSalesReturnGlAccountId,
 } from "@/repositories/gl-account.repository";
 import { parseTableQuery } from "@/services/table-query";
 import { branchScope, withBranch, resolveBranchId, resolveBranchCode, resolveBranchCodeFromId } from "@/helpers/branch.helper";
@@ -403,9 +407,9 @@ export const postSalesReturn = async (req: Request, res: Response) => {
             const arGlCode = salesMapping.find((m) => m.side === "debit")?.glAccountCode || "1300";
             const taxGlCode = taxMapping[0]?.glAccountCode || "2200";
 
-            const salesReturnGl = (await findGlAccountByCode("4200")) || (await findGlAccountByCode(revenueGlCode));
-            const arGl = (await findGlAccountByCode(arGlCode)) || (await findGlAccountByCode("1200"));
-            const taxGl = (await findGlAccountByCode(taxGlCode)) || (await findGlAccountByCode("2200")) || (await findGlAccountByCode("2150"));
+            const salesReturnGl = (await findGlAccountByCode(revenueGlCode, tx)) || (await getSalesReturnGlAccountId(tx));
+            const arGl = (await findGlAccountByCode(arGlCode, tx)) || (await getAccountsReceivableGlAccountId(tx));
+            const taxGl = (await findGlAccountByCode(taxGlCode, tx)) || (await getOutputTaxGlAccountId(tx));
             const inventoryGl = await getInventoryGlAccountId(tx);
             const cogsGl = await getCogsGlAccountId(tx);
 

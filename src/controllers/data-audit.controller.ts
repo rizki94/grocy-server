@@ -22,7 +22,16 @@ import { resolveBranchCodeFromId, resolveBranchId } from "@/helpers/branch.helpe
 import { updateStockForTransaction } from "@/repositories/stock.repository";
 import { addDays } from "@/helpers/add-days";
 import { logger } from "@/logger";
-import { getCogsGlAccountId, getInventoryGlAccountId } from "@/repositories/gl-account.repository";
+import {
+    getCogsGlAccountId,
+    getInventoryGlAccountId,
+    getAccountsPayableGlAccountId,
+    getAccountsReceivableGlAccountId,
+    getSalesRevenueGlAccountId,
+    getInputTaxGlAccountId,
+    getOutputTaxGlAccountId,
+    getSalesReturnGlAccountId,
+} from "@/repositories/gl-account.repository";
 
 export interface AuditIssue {
     id: string;
@@ -1048,12 +1057,12 @@ export async function reconcileDataIntegrity(req: Request, res: Response) {
                         const totalAmount = Number(trx.total_amount || 0);
                         const totalTax = Number(trx.total_tax || 0);
 
-                        // Jika konfigurasi mapping belum ada, gunakan Chart of Accounts standar
+                        // Jika konfigurasi mapping belum ada, gunakan Chart of Accounts standar via dynamic resolver
                         if (mappings.length === 0) {
                             if (trx.type === "purchase" || trx.type === "purchase_return") {
-                                const invId = (await findGlAccountId("1400", tx)) || (await findGlAccountId("1410", tx));
-                                const apId = (await findGlAccountId("2100", tx)) || (await findGlAccountId("2110", tx));
-                                const taxId = await findGlAccountId("1500", tx);
+                                const invId = await getInventoryGlAccountId(tx);
+                                const apId = await getAccountsPayableGlAccountId(tx);
+                                const taxId = await getInputTaxGlAccountId(tx);
 
                                 if (trx.type === "purchase") {
                                     if (invId && totalAmount - totalTax > 0) {
@@ -1075,9 +1084,9 @@ export async function reconcileDataIntegrity(req: Request, res: Response) {
                                 }
                             } else {
                                 // sales / pos_sales / sales_return
-                                const arId = (await findGlAccountId("1300", tx)) || (await findGlAccountId("1310", tx));
-                                const revId = (await findGlAccountId("4100", tx)) || (await findGlAccountId("4110", tx));
-                                const taxId = await findGlAccountId("2200", tx);
+                                const arId = await getAccountsReceivableGlAccountId(tx);
+                                const revId = await getSalesRevenueGlAccountId(tx);
+                                const taxId = await getOutputTaxGlAccountId(tx);
 
                                 if (trx.type === "sales" || trx.type === "pos_sales") {
                                     if (arId && totalAmount > 0) {
@@ -1090,7 +1099,7 @@ export async function reconcileDataIntegrity(req: Request, res: Response) {
                                         await tx.insert(journalEntries).values({ journalId: newJournal.id, glAccountId: taxId, debit: 0, credit: totalTax, note: `PPN Keluaran ${trx.invoice}` });
                                     }
                                 } else if (trx.type === "sales_return") {
-                                    const retId = (await findGlAccountId("4150", tx)) || revId;
+                                    const retId = await getSalesReturnGlAccountId(tx);
                                     if (retId && totalAmount > 0) {
                                         await tx.insert(journalEntries).values({ journalId: newJournal.id, glAccountId: retId, debit: totalAmount, credit: 0, note: `Retur Penjualan ${trx.invoice}` });
                                     }
