@@ -25,7 +25,11 @@ import { updateStockForTransaction } from "@/repositories/stock.repository";
 import { Request, Response } from "express";
 import { eq, and, ilike, or, sql } from "drizzle-orm";
 import { logAction } from "@/utils/log-helper";
-import { findGlAccountByCode } from "@/repositories/gl-account.repository";
+import {
+    findGlAccountByCode,
+    getCogsGlAccountId,
+    getInventoryGlAccountId,
+} from "@/repositories/gl-account.repository";
 import { resolveBranchId, resolveBranchCode, resolveBranchCodeFromId } from "@/helpers/branch.helper";
 
 export async function checkout(req: Request, res: Response) {
@@ -363,20 +367,31 @@ export async function checkout(req: Request, res: Response) {
             );
 
             if (totalCogs > 0) {
-                await tx.insert(journalEntries).values({
-                    journalId: salesJournal.id,
-                    glAccountId: await findGlAccountByCode("5100"), // COGS
-                    debit: totalCogs,
-                    credit: 0,
-                    note: `Beban Pokok Penjualan ${transaction.invoice}`,
-                });
-                await tx.insert(journalEntries).values({
-                    journalId: salesJournal.id,
-                    glAccountId: await findGlAccountByCode("1400"), // Inventory
-                    debit: 0,
-                    credit: totalCogs,
-                    note: `Pengurangan Persediaan ${transaction.invoice}`,
-                });
+                const cogsGlId =
+                    (await getCogsGlAccountId(tx)) ||
+                    (await findGlAccountByCode("5100"));
+                const invGlId =
+                    (await getInventoryGlAccountId(tx)) ||
+                    (await findGlAccountByCode("1400"));
+
+                if (cogsGlId) {
+                    await tx.insert(journalEntries).values({
+                        journalId: salesJournal.id,
+                        glAccountId: cogsGlId,
+                        debit: totalCogs,
+                        credit: 0,
+                        note: `Beban Pokok Penjualan ${transaction.invoice}`,
+                    });
+                }
+                if (invGlId) {
+                    await tx.insert(journalEntries).values({
+                        journalId: salesJournal.id,
+                        glAccountId: invGlId,
+                        debit: 0,
+                        credit: totalCogs,
+                        note: `Pengurangan Persediaan ${transaction.invoice}`,
+                    });
+                }
             }
 
             // 8. Handle Payment

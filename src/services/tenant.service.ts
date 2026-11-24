@@ -260,6 +260,25 @@ export interface WorkspaceProvisionParams {
         priceGroupName?: string;
         customerName?: string;
         supplierName?: string;
+        coaMode?: "standard" | "custom";
+        glAccounts?: Array<{
+            code: string;
+            name: string;
+            type: "asset" | "liability" | "equity" | "income" | "expense";
+            parentCode?: string | null;
+            isActive?: boolean;
+        }>;
+        accountMappings?: {
+            cogsCode?: string;
+            arCode?: string;
+            apCode?: string;
+            salesTaxCode?: string;
+            purchaseTaxCode?: string;
+            inventoryCode?: string;
+            salesCode?: string;
+            cashCode?: string;
+            bankCode?: string;
+        };
     };
 }
 
@@ -665,7 +684,7 @@ export async function provisionWorkspace(params: WorkspaceProvisionParams) {
             .returning();
 
         // 8. Ensure Essential Foundation Data (GL Accounts, Account Mappings, Settings, Taxes, Return Reasons, Product Attributes)
-        await ensureEssentialTenantData(tenantDb);
+        await ensureEssentialTenantData(tenantDb, params.customData);
 
         // 8b. Seed Initial Company & Print Layout Profile from Setup Token / HQ Branch
         const initialCompanyName =
@@ -686,16 +705,26 @@ export async function provisionWorkspace(params: WorkspaceProvisionParams) {
             .where(eq(schema.settings.id, "global"));
 
         // Resolve Cash & Bank GL Accounts
-        const [cashGl] = await tenantDb
+        const cashCode = params.customData?.accountMappings?.cashCode || "1100";
+        const bankCode = params.customData?.accountMappings?.bankCode || "1200";
+
+        let [cashGl] = await tenantDb
             .select()
             .from(schema.glAccounts)
-            .where(eq(schema.glAccounts.code, "1100"))
+            .where(eq(schema.glAccounts.code, cashCode))
             .limit(1);
+        if (!cashGl) {
+            [cashGl] = await tenantDb
+                .select()
+                .from(schema.glAccounts)
+                .where(eq(schema.glAccounts.type, "asset"))
+                .limit(1);
+        }
 
         const [bankGl] = await tenantDb
             .select()
             .from(schema.glAccounts)
-            .where(eq(schema.glAccounts.code, "1200"))
+            .where(eq(schema.glAccounts.code, bankCode))
             .limit(1);
 
         // 9. Create Super Admin User (Linked with posWarehouseId & cashGlAccountId)
@@ -746,7 +775,17 @@ export async function provisionWorkspace(params: WorkspaceProvisionParams) {
             })
             .returning();
 
-        // 10. Operational Seeds (Units, Price Groups, Payment Methods, Contacts)
+        // 10. Operational Seeds (Route Group, Units, Price Groups, Payment Methods, Contacts)
+        const [defaultRouteGroup] = await tenantDb
+            .insert(schema.routeGroups)
+            .values({
+                name: "Rute Reguler / Utama",
+                branchId: hqBranch.id,
+                description: "Rute distribusi reguler operasional",
+                isActive: true,
+            })
+            .returning();
+
         if (params.useDefaultSeed !== false) {
             // Standard Units
             const units = [
@@ -818,18 +857,19 @@ export async function provisionWorkspace(params: WorkspaceProvisionParams) {
                     name: "Pelanggan Umum",
                     contactType: "customer",
                     priceGroupId: pgRegular.id,
+                    routeGroupId: defaultRouteGroup.id,
                     salespersonId: adminEmployee.id,
-                    address: "-",
-                    phone: "-",
-                    email: "-",
+                    address: "Jl. Pelanggan Utama No. 1",
+                    phone: "",
+                    email: "",
                     isActive: true,
                 },
                 {
                     name: "Pemasok Utama",
                     contactType: "supplier",
-                    address: "-",
-                    phone: "-",
-                    email: "-",
+                    address: "Jl. Pemasok Utama No. 1",
+                    phone: "",
+                    email: "",
                     isActive: true,
                 },
             ]);
@@ -878,18 +918,19 @@ export async function provisionWorkspace(params: WorkspaceProvisionParams) {
                     name: params.customData?.customerName?.trim() || "Pelanggan Umum",
                     contactType: "customer",
                     priceGroupId: pgCustom.id,
+                    routeGroupId: defaultRouteGroup.id,
                     salespersonId: adminEmployee.id,
-                    address: "-",
-                    phone: "-",
-                    email: "-",
+                    address: "Jl. Pelanggan Utama No. 1",
+                    phone: "",
+                    email: "",
                     isActive: true,
                 },
                 {
                     name: params.customData?.supplierName?.trim() || "Pemasok Utama",
                     contactType: "supplier",
-                    address: "-",
-                    phone: "-",
-                    email: "-",
+                    address: "Jl. Pemasok Utama No. 1",
+                    phone: "",
+                    email: "",
                     isActive: true,
                 },
             ]);
@@ -1053,15 +1094,182 @@ export async function syncTenantPermissions(
  */
 export async function ensureEssentialTenantData(
     tenantDb: NodePgDatabase<typeof schema>,
+    customCoaData?: WorkspaceProvisionParams["customData"],
 ) {
-    // 1. Seed GL Accounts
-    await seedGlAccounts(tenantDb);
+    if (
+        customCoaData?.coaMode === "custom" &&
+        customCoaData.glAccounts &&
+        customCoaData.glAccounts.length > 0
+    ) {
+        console.log(
+            `Provisioning ${customCoaData.glAccounts.length} custom Chart of Accounts...`,
+        );
 
-    // 2. Seed Account Mappings
-    await seedAccountMappings(tenantDb);
+        // 1. Insert custom GL Accounts
+        for (const acc of customCoaData.glAccounts) {
+            const cleanCode = (acc.code || "").trim();
+            const cleanName = (acc.name || cleanCode).trim();
+            if (!cleanCode || !cleanName) continue;
 
-    // 3. Seed Settings (with resolved GL IDs)
-    await seedSettings(tenantDb);
+            const [exists] = await tenantDb
+                .select()
+                .from(schema.glAccounts)
+                .where(eq(schema.glAccounts.code, cleanCode))
+                .limit(1);
+
+            if (!exists) {
+                await tenantDb.insert(schema.glAccounts).values({
+                    code: cleanCode,
+                    name: cleanName,
+                    type: acc.type || "asset",
+                    isActive: acc.isActive ?? true,
+                });
+            }
+        }
+
+        // Link parentIds for accounts that specify parentCode
+        for (const acc of customCoaData.glAccounts) {
+            const cleanCode = (acc.code || "").trim();
+            const cleanParentCode = (acc.parentCode || "").trim();
+            if (cleanCode && cleanParentCode) {
+                const [parent] = await tenantDb
+                    .select()
+                    .from(schema.glAccounts)
+                    .where(eq(schema.glAccounts.code, cleanParentCode))
+                    .limit(1);
+                if (parent) {
+                    await tenantDb
+                        .update(schema.glAccounts)
+                        .set({ parentId: parent.id })
+                        .where(eq(schema.glAccounts.code, cleanCode));
+                }
+            }
+        }
+
+        // 2. Custom Account Mappings
+        const maps = customCoaData.accountMappings || {};
+        const inventoryGlCode = maps.inventoryCode?.trim() || "1400";
+        const apGlCode = maps.apCode?.trim() || "2100";
+        const arGlCode = maps.arCode?.trim() || "1300";
+        const salesGlCode = maps.salesCode?.trim() || "4100";
+        const salesTaxGlCode = maps.salesTaxCode?.trim() || "2200";
+        const purchaseTaxGlCode = maps.purchaseTaxCode?.trim() || "1500";
+
+        const customMappings = [
+            {
+                type: "purchase" as const,
+                side: "debit" as const,
+                glAccountCode: inventoryGlCode,
+                note: "Persediaan",
+            },
+            {
+                type: "purchase" as const,
+                side: "credit" as const,
+                glAccountCode: apGlCode,
+                note: "Hutang Usaha",
+            },
+            {
+                type: "sales" as const,
+                side: "debit" as const,
+                glAccountCode: arGlCode,
+                note: "Piutang Usaha",
+            },
+            {
+                type: "sales" as const,
+                side: "credit" as const,
+                glAccountCode: salesGlCode,
+                note: "Pendapatan Penjualan",
+            },
+            {
+                type: "sales_tax" as const,
+                side: "credit" as const,
+                glAccountCode: salesTaxGlCode,
+                note: "PPN Keluaran",
+            },
+            {
+                type: "purchase_tax" as const,
+                side: "debit" as const,
+                glAccountCode: purchaseTaxGlCode,
+                note: "PPN Masukan",
+            },
+        ];
+
+        for (const map of customMappings) {
+            const [gl] = await tenantDb
+                .select()
+                .from(schema.glAccounts)
+                .where(eq(schema.glAccounts.code, map.glAccountCode))
+                .limit(1);
+            if (gl) {
+                const [exists] = await tenantDb
+                    .select()
+                    .from(schema.accountMappings)
+                    .where(
+                        and(
+                            eq(schema.accountMappings.type, map.type),
+                            eq(schema.accountMappings.side, map.side),
+                        ),
+                    )
+                    .limit(1);
+
+                if (!exists) {
+                    await tenantDb.insert(schema.accountMappings).values(map);
+                } else {
+                    await tenantDb
+                        .update(schema.accountMappings)
+                        .set({
+                            glAccountCode: map.glAccountCode,
+                            note: map.note,
+                        })
+                        .where(eq(schema.accountMappings.id, exists.id));
+                }
+            }
+        }
+
+        // 3. Resolve GL accounts for Settings (COGS, Retained Earnings, Rounding Diff)
+        let cogsGlId: string | null = null;
+        if (maps.cogsCode?.trim()) {
+            const [cogsGl] = await tenantDb
+                .select()
+                .from(schema.glAccounts)
+                .where(eq(schema.glAccounts.code, maps.cogsCode.trim()))
+                .limit(1);
+            if (cogsGl) cogsGlId = cogsGl.id;
+        }
+
+        // Retained Earnings (Equity account)
+        const [retainedGl] = await tenantDb
+            .select()
+            .from(schema.glAccounts)
+            .where(eq(schema.glAccounts.type, "equity"))
+            .limit(1);
+
+        // Rounding Diff (Expense account)
+        const [roundGl] = await tenantDb
+            .select()
+            .from(schema.glAccounts)
+            .where(eq(schema.glAccounts.type, "expense"))
+            .limit(1);
+
+        await seedSettings(tenantDb);
+        await tenantDb
+            .update(schema.settings)
+            .set({
+                cogsGlAccountId: cogsGlId,
+                retainedEarningsGlAccountId: retainedGl?.id || null,
+                roundingDifferenceGlAccountId: roundGl?.id || null,
+            })
+            .where(eq(schema.settings.id, "global"));
+    } else {
+        // 1. Seed GL Accounts
+        await seedGlAccounts(tenantDb);
+
+        // 2. Seed Account Mappings
+        await seedAccountMappings(tenantDb);
+
+        // 3. Seed Settings (with resolved GL IDs)
+        await seedSettings(tenantDb);
+    }
 
     // 4. Ensure Default Tax (PPN 11%)
     const existingTaxes = await tenantDb.select().from(schema.taxes).limit(1);

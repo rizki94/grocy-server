@@ -1,6 +1,12 @@
 import { db } from "@/db";
-import { glAccounts, journalEntries, journals } from "@/db/schemas";
-import { and, asc, eq, sql } from "drizzle-orm";
+import {
+    accountMappings,
+    glAccounts,
+    journalEntries,
+    journals,
+    settings,
+} from "@/db/schemas";
+import { and, asc, eq, ilike, or, sql } from "drizzle-orm";
 
 export async function findGlAccountByCode(code: string) {
     const result = await db
@@ -9,6 +15,76 @@ export async function findGlAccountByCode(code: string) {
         .where(eq(glAccounts.code, code))
         .limit(1);
     return result[0]?.id;
+}
+
+export async function getCogsGlAccountId(tx?: any) {
+    const dbClient = tx || db;
+    try {
+        const [st] = await dbClient
+            .select({ id: settings.cogsGlAccountId })
+            .from(settings)
+            .limit(1);
+        if (st?.id) return st.id;
+    } catch {}
+
+    const direct5100 = await findGlAccountByCode("5100");
+    if (direct5100) return direct5100;
+
+    const [cogsByName] = await dbClient
+        .select({ id: glAccounts.id })
+        .from(glAccounts)
+        .where(
+            and(
+                eq(glAccounts.type, "expense"),
+                or(
+                    ilike(glAccounts.name, "%hpp%"),
+                    ilike(glAccounts.name, "%pokok penjualan%"),
+                    ilike(glAccounts.name, "%cogs%"),
+                ),
+            ),
+        )
+        .limit(1);
+
+    return cogsByName?.id || null;
+}
+
+export async function getInventoryGlAccountId(tx?: any) {
+    const dbClient = tx || db;
+    try {
+        const [purchaseMap] = await dbClient
+            .select()
+            .from(accountMappings)
+            .where(
+                and(
+                    eq(accountMappings.type, "purchase"),
+                    eq(accountMappings.side, "debit"),
+                ),
+            )
+            .limit(1);
+        if (purchaseMap?.glAccountCode) {
+            const id = await findGlAccountByCode(purchaseMap.glAccountCode);
+            if (id) return id;
+        }
+    } catch {}
+
+    const direct1400 = await findGlAccountByCode("1400");
+    if (direct1400) return direct1400;
+
+    const [invByName] = await dbClient
+        .select({ id: glAccounts.id })
+        .from(glAccounts)
+        .where(
+            and(
+                eq(glAccounts.type, "asset"),
+                or(
+                    ilike(glAccounts.name, "%persediaan%"),
+                    ilike(glAccounts.name, "%inventory%"),
+                ),
+            ),
+        )
+        .limit(1);
+
+    return invByName?.id || null;
 }
 
 export async function findLeafGlAccounts() {

@@ -33,7 +33,11 @@ import {
 } from "drizzle-orm";
 import { PgColumn } from "drizzle-orm/pg-core";
 import { Request, Response } from "express";
-import { findGlAccountByCode } from "@/repositories/gl-account.repository";
+import {
+    findGlAccountByCode,
+    getCogsGlAccountId,
+    getInventoryGlAccountId,
+} from "@/repositories/gl-account.repository";
 import { parseTableQuery } from "@/services/table-query";
 import { branchScope, withBranch, resolveBranchId, resolveBranchCode, resolveBranchCodeFromId } from "@/helpers/branch.helper";
 import { assertCustomerHasPriceGroup, CustomerGuardError } from "@/helpers/customer.helper";
@@ -402,8 +406,12 @@ export const postSalesReturn = async (req: Request, res: Response) => {
             const salesReturnGl = (await findGlAccountByCode("4200")) || (await findGlAccountByCode(revenueGlCode));
             const arGl = (await findGlAccountByCode(arGlCode)) || (await findGlAccountByCode("1200"));
             const taxGl = (await findGlAccountByCode(taxGlCode)) || (await findGlAccountByCode("2200")) || (await findGlAccountByCode("2150"));
-            const inventoryGl = await findGlAccountByCode("1400");
-            const cogsGl = await findGlAccountByCode("5100");
+            const inventoryGl =
+                (await getInventoryGlAccountId(tx)) ||
+                (await findGlAccountByCode("1400"));
+            const cogsGl =
+                (await getCogsGlAccountId(tx)) ||
+                (await findGlAccountByCode("5100"));
 
             if (netRevenue > 0 && salesReturnGl) {
                 await tx.insert(journalEntries).values({

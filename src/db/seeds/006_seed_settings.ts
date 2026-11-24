@@ -27,6 +27,17 @@ export async function seedSettings(dbInstance: typeof db) {
         retainedEarningsGlAccountId = retainedAcc[0].id;
     }
 
+    let cogsGlAccountId = null;
+    const cogsAcc = await dbInstance
+        .select()
+        .from(glAccounts)
+        .where(eq(glAccounts.code, "5100"))
+        .limit(1);
+
+    if (cogsAcc.length > 0) {
+        cogsGlAccountId = cogsAcc[0].id;
+    }
+
     const defaultValues = {
         id: "global",
         posRound2Digit: false,
@@ -34,6 +45,7 @@ export async function seedSettings(dbInstance: typeof db) {
         enableInventoryTracking: true,
         roundingDifferenceGlAccountId: roundingDiffGlAccountId,
         retainedEarningsGlAccountId: retainedEarningsGlAccountId,
+        cogsGlAccountId: cogsGlAccountId,
         minDateOffset: -365,
         maxDateOffset: 30,
         lockSalesPrice: false,
@@ -70,6 +82,7 @@ export async function seedSettings(dbInstance: typeof db) {
             .set({
                 roundingDifferenceGlAccountId: roundingDiffGlAccountId,
                 retainedEarningsGlAccountId: retainedEarningsGlAccountId,
+                cogsGlAccountId: cogsGlAccountId,
             })
             .where(eq(settings.id, "global"));
         console.log(

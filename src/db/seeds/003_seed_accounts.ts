@@ -23,6 +23,7 @@ import {
     paymentMethods,
     returnReasons,
     glAccounts,
+    routeGroups,
 } from "../schemas";
 
 export async function seedAccounts(dbInstance: typeof db) {
@@ -427,6 +428,18 @@ export async function seedAccounts(dbInstance: typeof db) {
         },
     );
 
+    // 10b. Route Groups (must exist before Contacts to assign routeGroupId)
+    const defaultRouteGroup = await getOrCreate<typeof routeGroups.$inferSelect>(
+        routeGroups,
+        eq(routeGroups.name, "Rute Reguler / Utama"),
+        {
+            name: "Rute Reguler / Utama",
+            branchId: hqBranch.id,
+            description: "Rute distribusi reguler operasional",
+            isActive: true,
+        },
+    );
+
     // 11. Contacts (Customer & Supplier)
     const generalCustomer = await getOrCreate<typeof contacts.$inferSelect>(
         contacts,
@@ -435,15 +448,19 @@ export async function seedAccounts(dbInstance: typeof db) {
             contactType: "customer",
             name: "General Customer",
             address: "Jl. Pelanggan Umum No. 1, Jakarta",
-            phone: "0812-0000-0001",
-            email: "customer@example.com",
+            phone: "",
+            email: "",
             priceGroupId: regularPriceGroup.id,
+            routeGroupId: defaultRouteGroup.id,
         },
     );
-    if (!generalCustomer.priceGroupId) {
+    if (!generalCustomer.priceGroupId || !generalCustomer.routeGroupId) {
         await dbInstance
             .update(contacts)
-            .set({ priceGroupId: regularPriceGroup.id })
+            .set({
+                priceGroupId: regularPriceGroup.id,
+                routeGroupId: defaultRouteGroup.id,
+            })
             .where(eq(contacts.id, generalCustomer.id));
     }
 
@@ -458,12 +475,16 @@ export async function seedAccounts(dbInstance: typeof db) {
             email: "purchasing@berkahabadi.example.com",
             termOfPayment: 14,
             priceGroupId: regularPriceGroup.id,
+            routeGroupId: defaultRouteGroup.id,
         },
     );
-    if (!retailCustomer.priceGroupId) {
+    if (!retailCustomer.priceGroupId || !retailCustomer.routeGroupId) {
         await dbInstance
             .update(contacts)
-            .set({ priceGroupId: regularPriceGroup.id })
+            .set({
+                priceGroupId: regularPriceGroup.id,
+                routeGroupId: defaultRouteGroup.id,
+            })
             .where(eq(contacts.id, retailCustomer.id));
     }
 

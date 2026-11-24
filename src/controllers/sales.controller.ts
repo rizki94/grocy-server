@@ -39,7 +39,11 @@ import {
 } from "drizzle-orm";
 import { PgColumn } from "drizzle-orm/pg-core";
 import { Request, Response } from "express";
-import { findGlAccountByCode } from "@/repositories/gl-account.repository";
+import {
+    findGlAccountByCode,
+    getCogsGlAccountId,
+    getInventoryGlAccountId,
+} from "@/repositories/gl-account.repository";
 import { parseTableQuery } from "@/services/table-query";
 import { branchScope, withBranch } from "@/helpers/branch.helper";
 import { isTaxEnabled, withoutTax } from "@/helpers/tax.helper";
@@ -498,20 +502,31 @@ export const postSales = async (req: Request, res: Response) => {
             );
 
             if (totalCogs > 0) {
-                await tx.insert(journalEntries).values({
-                    journalId: journal.id,
-                    glAccountId: await findGlAccountByCode("5100"),
-                    debit: totalCogs,
-                    credit: 0,
-                    note: `Beban Pokok Penjualan ${sales.invoice}`,
-                });
-                await tx.insert(journalEntries).values({
-                    journalId: journal.id,
-                    glAccountId: await findGlAccountByCode("1400"),
-                    debit: 0,
-                    credit: totalCogs,
-                    note: `Pengurangan Persediaan ${sales.invoice}`,
-                });
+                const cogsGlId =
+                    (await getCogsGlAccountId(tx)) ||
+                    (await findGlAccountByCode("5100"));
+                const invGlId =
+                    (await getInventoryGlAccountId(tx)) ||
+                    (await findGlAccountByCode("1400"));
+
+                if (cogsGlId) {
+                    await tx.insert(journalEntries).values({
+                        journalId: journal.id,
+                        glAccountId: cogsGlId,
+                        debit: totalCogs,
+                        credit: 0,
+                        note: `Beban Pokok Penjualan ${sales.invoice}`,
+                    });
+                }
+                if (invGlId) {
+                    await tx.insert(journalEntries).values({
+                        journalId: journal.id,
+                        glAccountId: invGlId,
+                        debit: 0,
+                        credit: totalCogs,
+                        note: `Pengurangan Persediaan ${sales.invoice}`,
+                    });
+                }
             }
 
             // Receivable for Sales
@@ -929,8 +944,12 @@ export const cancelSales = async (req: Request, res: Response) => {
             );
 
             if (totalCogs > 0) {
-                const invGl = await findGlAccountByCode("1400");
-                const cogsGl = await findGlAccountByCode("5100");
+                const invGl =
+                    (await getInventoryGlAccountId(tx)) ||
+                    (await findGlAccountByCode("1400"));
+                const cogsGl =
+                    (await getCogsGlAccountId(tx)) ||
+                    (await findGlAccountByCode("5100"));
                 if (invGl) {
                     // Dr Inventory (1400)
                     await tx.insert(journalEntries).values({
