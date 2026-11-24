@@ -49,6 +49,20 @@ export const settings = pgTable("settings", {
     retainedEarningsGlAccountId: uuid("retained_earnings_gl_account_id").references(() => glAccounts.id),
     cogsGlAccountId: uuid("cogs_gl_account_id").references(() => glAccounts.id),
     inventoryGlAccountId: uuid("inventory_gl_account_id").references(() => glAccounts.id),
+    // Comprehensive Accounting / GL Mappings
+    arGlAccountId: uuid("ar_gl_account_id").references(() => glAccounts.id),
+    salesRevenueGlAccountId: uuid("sales_revenue_gl_account_id").references(() => glAccounts.id),
+    salesTaxGlAccountId: uuid("sales_tax_gl_account_id").references(() => glAccounts.id),
+    apGlAccountId: uuid("ap_gl_account_id").references(() => glAccounts.id),
+    purchaseTaxGlAccountId: uuid("purchase_tax_gl_account_id").references(() => glAccounts.id),
+    salesReturnGlAccountId: uuid("sales_return_gl_account_id").references(() => glAccounts.id),
+    purchaseReturnGlAccountId: uuid("purchase_return_gl_account_id").references(() => glAccounts.id),
+    stockLossGlAccountId: uuid("stock_loss_gl_account_id").references(() => glAccounts.id),
+    stockGainGlAccountId: uuid("stock_gain_gl_account_id").references(() => glAccounts.id),
+    paymentAdminFeeGlAccountId: uuid("payment_admin_fee_gl_account_id").references(() => glAccounts.id),
+    paymentDiscountGlAccountId: uuid("payment_discount_gl_account_id").references(() => glAccounts.id),
+    payrollExpenseGlAccountId: uuid("payroll_expense_gl_account_id").references(() => glAccounts.id),
+    payrollPayableGlAccountId: uuid("payroll_payable_gl_account_id").references(() => glAccounts.id),
     closingJournalPrefix: text("closing_journal_prefix").default("CLS").notNull(),
     printLayouts: jsonb("print_layouts"),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -69,6 +83,58 @@ export const settingsRelations = relations(settings, ({ one }) => ({
     }),
     inventoryGlAccount: one(glAccounts, {
         fields: [settings.inventoryGlAccountId],
+        references: [glAccounts.id],
+    }),
+    arGlAccount: one(glAccounts, {
+        fields: [settings.arGlAccountId],
+        references: [glAccounts.id],
+    }),
+    salesRevenueGlAccount: one(glAccounts, {
+        fields: [settings.salesRevenueGlAccountId],
+        references: [glAccounts.id],
+    }),
+    salesTaxGlAccount: one(glAccounts, {
+        fields: [settings.salesTaxGlAccountId],
+        references: [glAccounts.id],
+    }),
+    apGlAccount: one(glAccounts, {
+        fields: [settings.apGlAccountId],
+        references: [glAccounts.id],
+    }),
+    purchaseTaxGlAccount: one(glAccounts, {
+        fields: [settings.purchaseTaxGlAccountId],
+        references: [glAccounts.id],
+    }),
+    salesReturnGlAccount: one(glAccounts, {
+        fields: [settings.salesReturnGlAccountId],
+        references: [glAccounts.id],
+    }),
+    purchaseReturnGlAccount: one(glAccounts, {
+        fields: [settings.purchaseReturnGlAccountId],
+        references: [glAccounts.id],
+    }),
+    stockLossGlAccount: one(glAccounts, {
+        fields: [settings.stockLossGlAccountId],
+        references: [glAccounts.id],
+    }),
+    stockGainGlAccount: one(glAccounts, {
+        fields: [settings.stockGainGlAccountId],
+        references: [glAccounts.id],
+    }),
+    paymentAdminFeeGlAccount: one(glAccounts, {
+        fields: [settings.paymentAdminFeeGlAccountId],
+        references: [glAccounts.id],
+    }),
+    paymentDiscountGlAccount: one(glAccounts, {
+        fields: [settings.paymentDiscountGlAccountId],
+        references: [glAccounts.id],
+    }),
+    payrollExpenseGlAccount: one(glAccounts, {
+        fields: [settings.payrollExpenseGlAccountId],
+        references: [glAccounts.id],
+    }),
+    payrollPayableGlAccount: one(glAccounts, {
+        fields: [settings.payrollPayableGlAccountId],
         references: [glAccounts.id],
     }),
 }));

@@ -13,6 +13,7 @@ import { logAction } from "@/utils/log-helper";
 import bcrypt from "bcrypt";
 import { withBranch } from "@/helpers/branch.helper";
 import { createJournal } from "@/repositories/journal.repository";
+import { getPayrollExpenseGlAccountId } from "@/repositories/gl-account.repository";
 import {
     attendanceClockInSchema,
     attendanceClockOutSchema,
@@ -1471,18 +1472,24 @@ export const updatePayroll = async (req: Request, res: Response) => {
         // Auto-generate accounting journal entry when payroll transitions to 'paid'
         if (parsed.data.status === "paid" && existing.status !== "paid" && netSalary > 0) {
             try {
-                // 1. Find Beban Gaji & Upah account (code 5210 or expense containing 'gaji')
-                const expenseAcc = await db
-                    .select()
-                    .from(glAccounts)
-                    .where(
-                        or(
-                            eq(glAccounts.code, "5210"),
-                            and(eq(glAccounts.type, "expense"), like(sql`LOWER(${glAccounts.name})`, "%gaji%"))
-                        )
-                    )
-                    .limit(1)
-                    .then(r => r[0]);
+                // 1. Find Beban Gaji & Upah account
+                const configuredPayrollExpenseId = await getPayrollExpenseGlAccountId();
+                const expenseAcc = configuredPayrollExpenseId
+                    ? { id: configuredPayrollExpenseId }
+                    : await db
+                          .select()
+                          .from(glAccounts)
+                          .where(
+                              or(
+                                  eq(glAccounts.code, "5210"),
+                                  and(
+                                      eq(glAccounts.type, "expense"),
+                                      like(sql`LOWER(${glAccounts.name})`, "%gaji%"),
+                                  ),
+                              ),
+                          )
+                          .limit(1)
+                          .then((r) => r[0]);
 
                 // 2. Find Cash account (code 1100 Kas, 1200 Bank, or asset containing 'kas')
                 const cashAcc = await db

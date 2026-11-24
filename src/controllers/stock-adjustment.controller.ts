@@ -17,7 +17,12 @@ import { and, desc, eq, gte, lte, or, sql, like } from "drizzle-orm";
 import { Request, Response } from "express";
 import { parseTableQuery } from "@/services/table-query";
 import { PgColumn } from "drizzle-orm/pg-core";
-import { findGlAccountByCode } from "@/repositories/gl-account.repository";
+import {
+    findGlAccountByCode,
+    getInventoryGlAccountId,
+    getStockGainGlAccountId,
+    getStockLossGlAccountId,
+} from "@/repositories/gl-account.repository";
 import { branchScope, withBranch, resolveBranchId, resolveBranchCode, resolveBranchCodeFromId } from "@/helpers/branch.helper";
 
 export async function getAllAdjustments(req: Request, res: Response) {
@@ -298,15 +303,16 @@ export const postAdjustment = async (req: Request, res: Response) => {
 
             console.log(`[postAdjustment] Journal created: ${journal.id}`);
 
-            const inventoryAccount = await findGlAccountByCode("1400");
-            const adjustmentAccount = await findGlAccountByCode("5200"); // Operating Expenses as fallback
+            const inventoryAccount = (await getInventoryGlAccountId(tx)) || (await findGlAccountByCode("1400", tx));
+            const gainAccount = (await getStockGainGlAccountId(tx)) || (await findGlAccountByCode("5200", tx));
+            const lossAccount = (await getStockLossGlAccountId(tx)) || (await findGlAccountByCode("5200", tx));
 
-            if (!inventoryAccount || !adjustmentAccount) {
-                throw new Error("GL Accounts not found (1400 or 5200)");
+            if (!inventoryAccount || (!gainAccount && !lossAccount)) {
+                throw new Error("GL Accounts for inventory adjustment not configured");
             }
 
             // For IN (Add Stock): Dr Inventory, Cr Adjustment (Gain/Expense Reduction)
-            if (totalIn > 0) {
+            if (totalIn > 0 && gainAccount) {
                 await tx.insert(journalEntries).values({
                     journalId: journal.id,
                     glAccountId: inventoryAccount,
@@ -316,7 +322,7 @@ export const postAdjustment = async (req: Request, res: Response) => {
                 });
                 await tx.insert(journalEntries).values({
                     journalId: journal.id,
-                    glAccountId: adjustmentAccount,
+                    glAccountId: gainAccount,
                     debit: 0,
                     credit: totalIn,
                     note: `Penyesuaian Stok Masuk ${adjustment.invoice}`,
@@ -324,10 +330,10 @@ export const postAdjustment = async (req: Request, res: Response) => {
             }
 
             // For OUT (Remove Stock): Dr Adjustment (Loss/Expense), Cr Inventory
-            if (totalOut > 0) {
+            if (totalOut > 0 && lossAccount) {
                 await tx.insert(journalEntries).values({
                     journalId: journal.id,
-                    glAccountId: adjustmentAccount,
+                    glAccountId: lossAccount,
                     debit: totalOut,
                     credit: 0,
                     note: `Penyesuaian Stok Keluar ${adjustment.invoice}`,
@@ -574,15 +580,16 @@ export const cancelAdjustment = async (req: Request, res: Response) => {
                 })
                 .returning();
 
-            const inventoryAccount = await findGlAccountByCode("1400");
-            const adjustmentAccount = await findGlAccountByCode("5200");
+            const inventoryAccount = (await getInventoryGlAccountId(tx)) || (await findGlAccountByCode("1400", tx));
+            const gainAccount = (await getStockGainGlAccountId(tx)) || (await findGlAccountByCode("5200", tx));
+            const lossAccount = (await getStockLossGlAccountId(tx)) || (await findGlAccountByCode("5200", tx));
 
-            if (!inventoryAccount || !adjustmentAccount) {
-                throw new Error("GL Accounts not found");
+            if (!inventoryAccount || (!gainAccount && !lossAccount)) {
+                throw new Error("GL Accounts for inventory adjustment not configured");
             }
 
             // Create Journal Entries (Standard Logic, effectively reverses original impact)
-            if (totalIn > 0) {
+            if (totalIn > 0 && gainAccount) {
                 // Stock In: Debit Inventory, Credit Adjustment
                 await tx.insert(journalEntries).values({
                     journalId: journal.id,
@@ -593,18 +600,18 @@ export const cancelAdjustment = async (req: Request, res: Response) => {
                 });
                 await tx.insert(journalEntries).values({
                     journalId: journal.id,
-                    glAccountId: adjustmentAccount,
+                    glAccountId: gainAccount,
                     debit: 0,
                     credit: totalIn,
                     note: `Stock In (Void #${original.invoice})`,
                 });
             }
 
-            if (totalOut > 0) {
+            if (totalOut > 0 && lossAccount) {
                 // Stock Out: Debit Adjustment, Credit Inventory
                 await tx.insert(journalEntries).values({
                     journalId: journal.id,
-                    glAccountId: adjustmentAccount,
+                    glAccountId: lossAccount,
                     debit: totalOut,
                     credit: 0,
                     note: `Stock Out (Void #${original.invoice})`,

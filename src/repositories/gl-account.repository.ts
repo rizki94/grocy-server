@@ -149,6 +149,14 @@ export async function getAdminFeeGlAccountId(specificGlId?: string | null, tx?: 
     if (specificGlId) return specificGlId;
     const dbClient = tx || db;
     try {
+        const [st] = await dbClient
+            .select({ id: settings.paymentAdminFeeGlAccountId })
+            .from(settings)
+            .limit(1);
+        if (st?.id) return st.id;
+    } catch {}
+
+    try {
         const [feeByName] = await dbClient
             .select({ id: glAccounts.id })
             .from(glAccounts)
@@ -167,10 +175,10 @@ export async function getAdminFeeGlAccountId(specificGlId?: string | null, tx?: 
         if (feeByName?.id) return feeByName.id;
     } catch {}
 
-    const direct4800 = await findGlAccountByCode("4800");
+    const direct4800 = await findGlAccountByCode("4800", tx);
     if (direct4800) return direct4800;
 
-    const direct4900 = await findGlAccountByCode("4900");
+    const direct4900 = await findGlAccountByCode("4900", tx);
     if (direct4900) return direct4900;
 
     return null;
@@ -178,6 +186,14 @@ export async function getAdminFeeGlAccountId(specificGlId?: string | null, tx?: 
 
 export async function getAccountsPayableGlAccountId(tx?: any) {
     const dbClient = tx || db;
+    try {
+        const [st] = await dbClient
+            .select({ id: settings.apGlAccountId })
+            .from(settings)
+            .limit(1);
+        if (st?.id) return st.id;
+    } catch {}
+
     try {
         const [apMap] = await dbClient
             .select()
@@ -226,6 +242,14 @@ export async function getAccountsPayableGlAccountId(tx?: any) {
 
 export async function getAccountsReceivableGlAccountId(tx?: any) {
     const dbClient = tx || db;
+    try {
+        const [st] = await dbClient
+            .select({ id: settings.arGlAccountId })
+            .from(settings)
+            .limit(1);
+        if (st?.id) return st.id;
+    } catch {}
+
     try {
         const [arMap] = await dbClient
             .select()
@@ -278,6 +302,14 @@ export async function getAccountsReceivableGlAccountId(tx?: any) {
 export async function getSalesRevenueGlAccountId(tx?: any) {
     const dbClient = tx || db;
     try {
+        const [st] = await dbClient
+            .select({ id: settings.salesRevenueGlAccountId })
+            .from(settings)
+            .limit(1);
+        if (st?.id) return st.id;
+    } catch {}
+
+    try {
         const [revMap] = await dbClient
             .select()
             .from(accountMappings)
@@ -324,6 +356,14 @@ export async function getSalesRevenueGlAccountId(tx?: any) {
 
 export async function getInputTaxGlAccountId(tx?: any) {
     const dbClient = tx || db;
+    try {
+        const [st] = await dbClient
+            .select({ id: settings.purchaseTaxGlAccountId })
+            .from(settings)
+            .limit(1);
+        if (st?.id) return st.id;
+    } catch {}
+
     try {
         const [taxMap] = await dbClient
             .select()
@@ -375,6 +415,14 @@ export async function getInputTaxGlAccountId(tx?: any) {
 export async function getOutputTaxGlAccountId(tx?: any) {
     const dbClient = tx || db;
     try {
+        const [st] = await dbClient
+            .select({ id: settings.salesTaxGlAccountId })
+            .from(settings)
+            .limit(1);
+        if (st?.id) return st.id;
+    } catch {}
+
+    try {
         const [taxMap] = await dbClient
             .select()
             .from(accountMappings)
@@ -425,6 +473,14 @@ export async function getOutputTaxGlAccountId(tx?: any) {
 export async function getSalesReturnGlAccountId(tx?: any) {
     const dbClient = tx || db;
     try {
+        const [st] = await dbClient
+            .select({ id: settings.salesReturnGlAccountId })
+            .from(settings)
+            .limit(1);
+        if (st?.id) return st.id;
+    } catch {}
+
+    try {
         const [retMap] = await dbClient
             .select()
             .from(accountMappings)
@@ -461,4 +517,261 @@ export async function getSalesReturnGlAccountId(tx?: any) {
     if (direct4200) return direct4200;
 
     return await getSalesRevenueGlAccountId(tx);
+}
+
+export async function getPurchaseReturnGlAccountId(tx?: any) {
+    const dbClient = tx || db;
+    try {
+        const [st] = await dbClient
+            .select({ id: settings.purchaseReturnGlAccountId })
+            .from(settings)
+            .limit(1);
+        if (st?.id) return st.id;
+    } catch {}
+
+    try {
+        const [retMap] = await dbClient
+            .select()
+            .from(accountMappings)
+            .where(eq(accountMappings.type, "purchase_return"))
+            .limit(1);
+        if (retMap?.glAccountCode) {
+            const id = await findGlAccountByCode(retMap.glAccountCode, tx);
+            if (id) return id;
+        }
+    } catch {}
+
+    try {
+        const [retByName] = await dbClient
+            .select({ id: glAccounts.id })
+            .from(glAccounts)
+            .where(
+                and(
+                    or(eq(glAccounts.type, "asset"), eq(glAccounts.type, "expense")),
+                    or(
+                        ilike(glAccounts.name, "%retur pembelian%"),
+                        ilike(glAccounts.name, "%purchase return%"),
+                    ),
+                ),
+            )
+            .limit(1);
+        if (retByName?.id) return retByName.id;
+    } catch {}
+
+    return await getInventoryGlAccountId(tx);
+}
+
+export async function getStockLossGlAccountId(tx?: any) {
+    const dbClient = tx || db;
+    try {
+        const [st] = await dbClient
+            .select({ id: settings.stockLossGlAccountId })
+            .from(settings)
+            .limit(1);
+        if (st?.id) return st.id;
+    } catch {}
+
+    try {
+        const [adjMap] = await dbClient
+            .select()
+            .from(accountMappings)
+            .where(
+                and(
+                    eq(accountMappings.type, "adjustment"),
+                    eq(accountMappings.side, "debit"),
+                ),
+            )
+            .limit(1);
+        if (adjMap?.glAccountCode) {
+            const id = await findGlAccountByCode(adjMap.glAccountCode, tx);
+            if (id) return id;
+        }
+    } catch {}
+
+    try {
+        const [lossByName] = await dbClient
+            .select({ id: glAccounts.id })
+            .from(glAccounts)
+            .where(
+                and(
+                    eq(glAccounts.type, "expense"),
+                    or(
+                        ilike(glAccounts.name, "%pemutihan%"),
+                        ilike(glAccounts.name, "%selisih persediaan%"),
+                        ilike(glAccounts.name, "%penyesuaian persediaan%"),
+                        ilike(glAccounts.name, "%selisih barang%"),
+                        ilike(glAccounts.name, "%kerusakan%"),
+                        ilike(glAccounts.name, "%kehilangan%"),
+                        ilike(glAccounts.name, "%inventory loss%"),
+                    ),
+                ),
+            )
+            .limit(1);
+        if (lossByName?.id) return lossByName.id;
+    } catch {}
+
+    const direct5200 = await findGlAccountByCode("5200", tx);
+    if (direct5200) return direct5200;
+
+    const direct5300 = await findGlAccountByCode("5300", tx);
+    if (direct5300) return direct5300;
+
+    return null;
+}
+
+export async function getStockGainGlAccountId(tx?: any) {
+    const dbClient = tx || db;
+    try {
+        const [st] = await dbClient
+            .select({ id: settings.stockGainGlAccountId })
+            .from(settings)
+            .limit(1);
+        if (st?.id) return st.id;
+    } catch {}
+
+    try {
+        const [adjMap] = await dbClient
+            .select()
+            .from(accountMappings)
+            .where(
+                and(
+                    eq(accountMappings.type, "adjustment"),
+                    eq(accountMappings.side, "credit"),
+                ),
+            )
+            .limit(1);
+        if (adjMap?.glAccountCode) {
+            const id = await findGlAccountByCode(adjMap.glAccountCode, tx);
+            if (id) return id;
+        }
+    } catch {}
+
+    try {
+        const [gainByName] = await dbClient
+            .select({ id: glAccounts.id })
+            .from(glAccounts)
+            .where(
+                and(
+                    eq(glAccounts.type, "income"),
+                    or(
+                        ilike(glAccounts.name, "%selisih persediaan%"),
+                        ilike(glAccounts.name, "%penyesuaian persediaan%"),
+                        ilike(glAccounts.name, "%keuntungan persediaan%"),
+                        ilike(glAccounts.name, "%inventory gain%"),
+                    ),
+                ),
+            )
+            .limit(1);
+        if (gainByName?.id) return gainByName.id;
+    } catch {}
+
+    return await getStockLossGlAccountId(tx);
+}
+
+export async function getPaymentDiscountGlAccountId(tx?: any) {
+    const dbClient = tx || db;
+    try {
+        const [st] = await dbClient
+            .select({ id: settings.paymentDiscountGlAccountId })
+            .from(settings)
+            .limit(1);
+        if (st?.id) return st.id;
+    } catch {}
+
+    try {
+        const [discByName] = await dbClient
+            .select({ id: glAccounts.id })
+            .from(glAccounts)
+            .where(
+                and(
+                    or(eq(glAccounts.type, "expense"), eq(glAccounts.type, "income")),
+                    or(
+                        ilike(glAccounts.name, "%potongan penjualan%"),
+                        ilike(glAccounts.name, "%diskon pelunasan%"),
+                        ilike(glAccounts.name, "%potongan pembayaran%"),
+                        ilike(glAccounts.name, "%early payment discount%"),
+                    ),
+                ),
+            )
+            .limit(1);
+        if (discByName?.id) return discByName.id;
+    } catch {}
+
+    const direct4120 = await findGlAccountByCode("4120", tx);
+    if (direct4120) return direct4120;
+
+    return null;
+}
+
+export async function getPayrollExpenseGlAccountId(tx?: any) {
+    const dbClient = tx || db;
+    try {
+        const [st] = await dbClient
+            .select({ id: settings.payrollExpenseGlAccountId })
+            .from(settings)
+            .limit(1);
+        if (st?.id) return st.id;
+    } catch {}
+
+    try {
+        const [payByName] = await dbClient
+            .select({ id: glAccounts.id })
+            .from(glAccounts)
+            .where(
+                and(
+                    eq(glAccounts.type, "expense"),
+                    or(
+                        ilike(glAccounts.name, "%beban gaji%"),
+                        ilike(glAccounts.name, "%biaya gaji%"),
+                        ilike(glAccounts.name, "%gaji & upah%"),
+                        ilike(glAccounts.name, "%gaji dan upah%"),
+                        ilike(glAccounts.name, "%salary%"),
+                        ilike(glAccounts.name, "%payroll%"),
+                        ilike(glAccounts.name, "%gaji%"),
+                    ),
+                ),
+            )
+            .limit(1);
+        if (payByName?.id) return payByName.id;
+    } catch {}
+
+    const direct5210 = await findGlAccountByCode("5210", tx);
+    if (direct5210) return direct5210;
+
+    return null;
+}
+
+export async function getPayrollPayableGlAccountId(tx?: any) {
+    const dbClient = tx || db;
+    try {
+        const [st] = await dbClient
+            .select({ id: settings.payrollPayableGlAccountId })
+            .from(settings)
+            .limit(1);
+        if (st?.id) return st.id;
+    } catch {}
+
+    try {
+        const [payByName] = await dbClient
+            .select({ id: glAccounts.id })
+            .from(glAccounts)
+            .where(
+                and(
+                    eq(glAccounts.type, "liability"),
+                    or(
+                        ilike(glAccounts.name, "%hutang gaji%"),
+                        ilike(glAccounts.name, "%utang gaji%"),
+                        ilike(glAccounts.name, "%accrued salary%"),
+                        ilike(glAccounts.name, "%salaries payable%"),
+                    ),
+                ),
+            )
+            .limit(1);
+        if (payByName?.id) return payByName.id;
+    } catch {}
+
+    const direct2120 = await findGlAccountByCode("2120", tx);
+    if (direct2120) return direct2120;
+
+    return null;
 }
