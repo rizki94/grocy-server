@@ -385,8 +385,20 @@ function handleProductDatabaseError(err: any, res: Response, action: "create" | 
                 code: "INVALID_UNIT",
             });
         }
+        if (constraint.includes("branch")) {
+            return res.status(400).json({
+                message: "Cabang yang ditentukan tidak valid atau sudah dihapus.",
+                code: "INVALID_BRANCH",
+            });
+        }
+        if (constraint.includes("price_group")) {
+            return res.status(400).json({
+                message: "Kelompok harga yang dipilih tidak valid atau sudah dihapus.",
+                code: "INVALID_PRICE_GROUP",
+            });
+        }
         return res.status(400).json({
-            message: "Data referensi relasi tidak valid.",
+            message: pgErr.detail || "Data referensi relasi tidak valid.",
             code: "FOREIGN_KEY_VIOLATION",
         });
     }
@@ -409,136 +421,150 @@ export const createProduct = async (req: Request, res: Response) => {
     const product = parsed.data;
 
     try {
-        const [existingName] = await db
-            .select({ id: products.id })
-            .from(products)
-            .where(sql`LOWER(${products.name}) = LOWER(${product.name.trim()})`)
-            .limit(1);
+        let createdProductResult: any = null;
 
-        if (existingName) {
-            return res.status(409).json({
-                message: `Nama produk "${product.name}" sudah digunakan. Silakan gunakan nama produk yang berbeda.`,
-                code: "DUPLICATE_PRODUCT_NAME",
-            });
-        }
+        await db.transaction(async (tx) => {
+            const [existingName] = await tx
+                .select({ id: products.id })
+                .from(products)
+                .where(sql`LOWER(${products.name}) = LOWER(${product.name.trim()})`)
+                .limit(1);
 
-        const globalPriceBranchId = await getHqBranchId();
-        const [createdProduct] = await db
-            .insert(products)
-            .values({
-                name: product.name,
-                description: product.description,
-                isActive: product.isActive,
-                taxId: product.taxId,
-                isGlobal: product.isGlobal ?? true,
-                useBatch: product.useBatch,
-                useExpiry: product.useExpiry,
-                useSerialNumber: product.useSerialNumber,
-                reorderLevel: product.reorderLevel,
-            })
-            .returning();
+            if (existingName) {
+                const err: any = new Error(
+                    `Nama produk "${product.name}" sudah digunakan. Silakan gunakan nama produk yang berbeda.`,
+                );
+                err.status = 409;
+                err.code = "DUPLICATE_PRODUCT_NAME";
+                throw err;
+            }
 
-        if (!product.isGlobal && product.branchIds?.length) {
-            await db.insert(productBranches).values(
-                product.branchIds.map((bId) => ({
-                    productId: createdProduct.id,
-                    branchId: bId,
-                })),
-            );
-        }
-
-        for (const d of product.details ?? []) {
-            const [createdDetail] = await db
-                .insert(productDetails)
+            const globalPriceBranchId = await getHqBranchId(tx);
+            const [createdProduct] = await tx
+                .insert(products)
                 .values({
-                    productId: createdProduct.id,
-                    unitId: d.unitId,
-                    skuId: d.skuId,
-                    barcode: d.barcode,
-                    level: d.level,
-                    ratio: d.ratio,
-                    baseRatio: d.baseRatio,
-                    cost: d.cost ?? 0,
-                    weight: d.weight ?? 0,
-                    length: d.length ?? 0,
-                    width: d.width ?? 0,
-                    height: d.height ?? 0,
-                    isSellable: d.isSellable,
-                    isDefault: d.isDefault,
+                    name: product.name,
+                    description: product.description,
+                    isActive: product.isActive,
+                    taxId: product.taxId,
+                    isGlobal: product.isGlobal ?? true,
+                    useBatch: product.useBatch,
+                    useExpiry: product.useExpiry,
+                    useSerialNumber: product.useSerialNumber,
+                    reorderLevel: product.reorderLevel,
                 })
                 .returning();
 
-            if (d.prices?.length) {
-                await db.insert(productDetailPrices).values(
-                    d.prices.map((p) => ({
-                        productDetailId: createdDetail.id,
-                        priceGroupId: p.priceGroupId,
-                        branchId: globalPriceBranchId,
-                        price: p.price,
-                    })),
-                );
-            }
+            createdProductResult = createdProduct;
 
-            if (d.tierPrices?.length) {
-                await db.insert(productTierPrices).values(
-                    d.tierPrices.map((tp) => ({
-                        productDetailId: createdDetail.id,
-                        priceGroupId: tp.priceGroupId || null,
-                        branchId: tp.branchId || null,
-                        minQty: tp.minQty,
-                        price: tp.price,
-                    })),
-                );
-            }
-        }
-
-        if (product.attributes?.length) {
-            const validAttrs = product.attributes.filter(
-                (a) =>
-                    a.value !== undefined &&
-                    a.value !== null &&
-                    String(a.value).trim() !== "",
-            );
-            if (validAttrs.length) {
-                await db.insert(productAttributeValues).values(
-                    validAttrs.map((a) => ({
+            if (!product.isGlobal && product.branchIds?.length) {
+                await tx.insert(productBranches).values(
+                    product.branchIds.map((bId) => ({
                         productId: createdProduct.id,
-                        attributeId: a.attributeId,
-                        value: String(a.value).trim(),
+                        branchId: bId,
                     })),
                 );
             }
-        }
 
-        if (product.images?.length) {
-            await db.insert(productImages).values(
-                product.images.map((img) => ({
-                    productId: createdProduct.id,
-                    url: img.url,
-                    filename: img.filename,
-                    mimetype: img.mimetype ?? "image/*",
-                    size: img.size ?? 0,
-                })),
-            );
-        }
+            for (const d of product.details ?? []) {
+                const [createdDetail] = await tx
+                    .insert(productDetails)
+                    .values({
+                        productId: createdProduct.id,
+                        unitId: d.unitId,
+                        skuId: d.skuId,
+                        barcode: d.barcode,
+                        level: d.level,
+                        ratio: d.ratio,
+                        baseRatio: d.baseRatio,
+                        cost: d.cost ?? 0,
+                        weight: d.weight ?? 0,
+                        length: d.length ?? 0,
+                        width: d.width ?? 0,
+                        height: d.height ?? 0,
+                        isSellable: d.isSellable,
+                        isDefault: d.isDefault,
+                    })
+                    .returning();
+
+                if (d.prices?.length) {
+                    await tx.insert(productDetailPrices).values(
+                        d.prices.map((p) => ({
+                            productDetailId: createdDetail.id,
+                            priceGroupId: p.priceGroupId,
+                            branchId: globalPriceBranchId,
+                            price: p.price,
+                        })),
+                    );
+                }
+
+                if (d.tierPrices?.length) {
+                    await tx.insert(productTierPrices).values(
+                        d.tierPrices.map((tp) => ({
+                            productDetailId: createdDetail.id,
+                            priceGroupId: tp.priceGroupId || null,
+                            branchId: tp.branchId || null,
+                            minQty: tp.minQty,
+                            price: tp.price,
+                        })),
+                    );
+                }
+            }
+
+            if (product.attributes?.length) {
+                const validAttrs = product.attributes.filter(
+                    (a) =>
+                        a.value !== undefined &&
+                        a.value !== null &&
+                        String(a.value).trim() !== "",
+                );
+                if (validAttrs.length) {
+                    await tx.insert(productAttributeValues).values(
+                        validAttrs.map((a) => ({
+                            productId: createdProduct.id,
+                            attributeId: a.attributeId,
+                            value: String(a.value).trim(),
+                        })),
+                    );
+                }
+            }
+
+            if (product.images?.length) {
+                await tx.insert(productImages).values(
+                    product.images.map((img) => ({
+                        productId: createdProduct.id,
+                        url: img.url,
+                        filename: img.filename,
+                        mimetype: img.mimetype ?? "image/*",
+                        size: img.size ?? 0,
+                    })),
+                );
+            }
+        });
 
         logAction(req, {
             action: "insert",
             table: "products",
             data: {
-                ...createdProduct,
+                ...createdProductResult,
                 details: product.details,
                 attributes: product.attributes,
                 images: product.images,
             },
             userId: req.user!.id,
-            msg: `created product "${createdProduct.name}"`,
+            msg: `created product "${createdProductResult.name}"`,
         });
 
         return res
             .status(201)
-            .json({ message: "Product created", productId: createdProduct.id });
-    } catch (err) {
+            .json({ message: "Product created", productId: createdProductResult.id });
+    } catch (err: any) {
+        if (err.status && err.code) {
+            return res.status(err.status).json({
+                message: err.message,
+                code: err.code,
+            });
+        }
         return handleProductDatabaseError(err, res, "create");
     }
 };
@@ -899,7 +925,13 @@ export const updateProduct = async (req: Request, res: Response) => {
         });
 
         return res.json({ message: "Product updated successfully" });
-    } catch (err) {
+    } catch (err: any) {
+        if (err.status && err.code) {
+            return res.status(err.status).json({
+                message: err.message,
+                code: err.code,
+            });
+        }
         return handleProductDatabaseError(err, res, "update");
     }
 };

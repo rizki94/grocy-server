@@ -2,27 +2,47 @@ import { Request } from "express";
 import { eq, or, inArray, SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { branches, productBranches } from "@/db/schemas/branch.schema";
+import { tenantStorage } from "@/services/tenant.service";
 
-let cachedHqBranchId: string | null = null;
+const hqBranchCache = new Map<string, string>();
 
-export async function getDefaultBranchId(): Promise<string> {
-    if (cachedHqBranchId) return cachedHqBranchId;
-    const [hq] = await db
+export function clearHqBranchCache(dbName?: string) {
+    if (dbName) {
+        hqBranchCache.delete(dbName);
+    } else {
+        hqBranchCache.clear();
+    }
+}
+
+export async function getDefaultBranchId(tx?: any): Promise<string> {
+    const dbClient = tx || db;
+    const currentDb = tenantStorage.getStore()?.dbName || "default";
+
+    if (!tx && hqBranchCache.has(currentDb)) {
+        return hqBranchCache.get(currentDb)!;
+    }
+
+    const [hq] = await dbClient
         .select({ id: branches.id })
         .from(branches)
         .where(eq(branches.isHq, true))
         .limit(1);
+
     if (hq) {
-        cachedHqBranchId = hq.id;
+        if (!tx) hqBranchCache.set(currentDb, hq.id);
         return hq.id;
     }
-    const [first] = await db
+
+    const [first] = await dbClient
         .select({ id: branches.id })
         .from(branches)
         .limit(1);
+
     if (!first) {
         throw new Error("Cannot resolve a branch because no branches exist");
     }
+
+    if (!tx) hqBranchCache.set(currentDb, first.id);
     return first.id;
 }
 
@@ -31,13 +51,14 @@ export const getHqBranchId = getDefaultBranchId;
 export async function resolveBranchId(
     explicitBranchId?: string | null,
     req?: Request,
+    tx?: any,
 ): Promise<string> {
     if (explicitBranchId) return explicitBranchId;
     if (req) {
         const target = req.activeBranchId || (req.user as any)?.branchId;
         if (target) return target;
     }
-    return getDefaultBranchId();
+    return getDefaultBranchId(tx);
 }
 
 /**
