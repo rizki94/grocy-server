@@ -608,6 +608,20 @@ export async function checkout(req: Request, res: Response) {
                         note: `Selisih Pembulatan ${transaction.invoice}`,
                     });
                 }
+
+                // Sync open invoice paid amount with actual AR reduction
+                const effectiveArPaid = Math.min(originalTotalAmount, totalArReduction);
+                await tx.update(openInvoices)
+                    .set({
+                        paidAmount: effectiveArPaid,
+                        status:
+                            effectiveArPaid >= originalTotalAmount
+                                ? "paid"
+                                : effectiveArPaid > 0
+                                  ? "partial"
+                                  : "open",
+                    })
+                    .where(eq(openInvoices.id, openInvoice.id));
             }
 
             // 8. CRM Voucher Usage & Member Loyalty Points
