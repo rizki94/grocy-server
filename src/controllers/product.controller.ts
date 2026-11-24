@@ -35,6 +35,7 @@ import {
     inArray,
     isNull,
     like,
+    ne,
     or,
     sql,
 } from "drizzle-orm";
@@ -340,6 +341,62 @@ export const getProductByBarcode = async (req: Request, res: Response) => {
     }
 };
 
+function handleProductDatabaseError(err: any, res: Response, action: "create" | "update") {
+    console.error(`${action === "create" ? "CreateProduct" : "UpdateProduct"} error:`, err);
+    const pgErr = err?.cause || err;
+
+    if (pgErr?.code === "23505") {
+        const constraint = String(pgErr.constraint || "");
+        if (constraint.includes("products_name") || constraint === "products_name_unique") {
+            return res.status(409).json({
+                message: "Nama produk sudah terdaftar. Silakan gunakan nama produk yang berbeda.",
+                code: "DUPLICATE_PRODUCT_NAME",
+            });
+        }
+        if (constraint.includes("sku") || constraint === "product_details_sku_id_unique") {
+            return res.status(409).json({
+                message: "Kode SKU sudah terdaftar pada produk lain. Silakan gunakan SKU yang berbeda.",
+                code: "DUPLICATE_SKU",
+            });
+        }
+        if (constraint.includes("barcode") || constraint === "product_details_barcode_unique") {
+            return res.status(409).json({
+                message: "Barcode sudah terdaftar pada produk lain. Silakan gunakan barcode yang berbeda.",
+                code: "DUPLICATE_BARCODE",
+            });
+        }
+        return res.status(409).json({
+            message: pgErr.detail || "Data duplikat terdeteksi pada produk.",
+            code: "UNIQUE_VIOLATION",
+        });
+    }
+
+    if (pgErr?.code === "23503") {
+        const constraint = String(pgErr.constraint || "");
+        if (constraint.includes("tax")) {
+            return res.status(400).json({
+                message: "Pajak yang dipilih tidak valid atau sudah dihapus.",
+                code: "INVALID_TAX",
+            });
+        }
+        if (constraint.includes("unit")) {
+            return res.status(400).json({
+                message: "Satuan yang dipilih tidak valid atau sudah dihapus.",
+                code: "INVALID_UNIT",
+            });
+        }
+        return res.status(400).json({
+            message: "Data referensi relasi tidak valid.",
+            code: "FOREIGN_KEY_VIOLATION",
+        });
+    }
+
+    return res.status(500).json({
+        message: "Internal error",
+        error: (err as Error).message,
+    });
+}
+
 export const createProduct = async (req: Request, res: Response) => {
     const parsed = productWithDetailInsertSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -352,6 +409,19 @@ export const createProduct = async (req: Request, res: Response) => {
     const product = parsed.data;
 
     try {
+        const [existingName] = await db
+            .select({ id: products.id })
+            .from(products)
+            .where(sql`LOWER(${products.name}) = LOWER(${product.name.trim()})`)
+            .limit(1);
+
+        if (existingName) {
+            return res.status(409).json({
+                message: `Nama produk "${product.name}" sudah digunakan. Silakan gunakan nama produk yang berbeda.`,
+                code: "DUPLICATE_PRODUCT_NAME",
+            });
+        }
+
         const globalPriceBranchId = await getHqBranchId();
         const [createdProduct] = await db
             .insert(products)
@@ -469,10 +539,7 @@ export const createProduct = async (req: Request, res: Response) => {
             .status(201)
             .json({ message: "Product created", productId: createdProduct.id });
     } catch (err) {
-        console.error("CreateProduct error:", err);
-        return res
-            .status(500)
-            .json({ message: "Internal error", error: (err as Error).message });
+        return handleProductDatabaseError(err, res, "create");
     }
 };
 
@@ -488,6 +555,24 @@ export const updateProduct = async (req: Request, res: Response) => {
     const product = parsed.data;
 
     try {
+        const [existingName] = await db
+            .select({ id: products.id })
+            .from(products)
+            .where(
+                and(
+                    sql`LOWER(${products.name}) = LOWER(${product.name.trim()})`,
+                    ne(products.id, product.id),
+                ),
+            )
+            .limit(1);
+
+        if (existingName) {
+            return res.status(409).json({
+                message: `Nama produk "${product.name}" sudah digunakan oleh produk lain. Silakan gunakan nama produk yang berbeda.`,
+                code: "DUPLICATE_PRODUCT_NAME",
+            });
+        }
+
         const globalPriceBranchId = await getHqBranchId();
         const [existing] = await db
             .select()
@@ -815,11 +900,7 @@ export const updateProduct = async (req: Request, res: Response) => {
 
         return res.json({ message: "Product updated successfully" });
     } catch (err) {
-        console.error("UpdateProduct error:", err);
-        return res.status(500).json({
-            message: "Internal error",
-            error: (err as Error).message,
-        });
+        return handleProductDatabaseError(err, res, "update");
     }
 };
 
