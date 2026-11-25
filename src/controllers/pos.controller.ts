@@ -31,6 +31,10 @@ import {
     getInventoryGlAccountId,
     getAdminFeeGlAccountId,
     getAccountsReceivableGlAccountId,
+    getSalesRevenueGlAccountId,
+    getOutputTaxGlAccountId,
+    requireGlAccount,
+    AccountMappingRequiredError,
 } from "@/repositories/gl-account.repository";
 import { resolveBranchId, resolveBranchCode, resolveBranchCodeFromId } from "@/helpers/branch.helper";
 
@@ -313,16 +317,13 @@ export async function checkout(req: Request, res: Response) {
                 tx as any,
             );
 
-            // 7. Create Sales Journal
-            const mappings = await tx
-                .select()
-                .from(accountMappings)
-                .where(
-                    or(
-                        eq(accountMappings.type, "sales"),
-                        eq(accountMappings.type, "sales_tax"),
-                    ),
-                );
+            // 7. Create Sales Journal (Validate required account mappings without fallback)
+            const salesRevenueGlId = await requireGlAccount(getSalesRevenueGlAccountId, "Pendapatan Penjualan", tx);
+            const arGlId = await requireGlAccount(getAccountsReceivableGlAccountId, "Piutang Usaha (AR)", tx);
+            let salesTaxGlId: string | null = null;
+            if (appliedTax > 0) {
+                salesTaxGlId = await requireGlAccount(getOutputTaxGlAccountId, "PPN Keluaran", tx);
+            }
 
             const salesJournalBranchId = await resolveBranchId(transaction.branchId, req);
             const salesJournalBranchCode = await resolveBranchCodeFromId(salesJournalBranchId);
@@ -339,26 +340,35 @@ export async function checkout(req: Request, res: Response) {
                 })
                 .returning();
 
-            for (const map of mappings) {
-                let amount = 0;
-                if (map.type === "sales") {
-                    if (map.side === "debit") {
-                        amount = originalTotalAmount; // AR
-                    } else {
-                        amount = subtotal - totalDiscount; // Revenue
-                    }
-                } else if (map.type === "sales_tax") {
-                    amount = appliedTax; // Tax
-                }
+            // 1. Dr Piutang Usaha (AR)
+            await tx.insert(journalEntries).values({
+                journalId: salesJournal.id,
+                glAccountId: arGlId,
+                debit: originalTotalAmount,
+                credit: 0,
+                note: `Piutang Usaha ${transaction.invoice}`,
+            });
 
-                if (amount === 0) continue;
-
+            // 2. Cr Pendapatan Penjualan (Revenue / Net Subtotal)
+            const netRevenue = subtotal - totalDiscount;
+            if (netRevenue > 0) {
                 await tx.insert(journalEntries).values({
                     journalId: salesJournal.id,
-                    glAccountId: await findGlAccountByCode(map.glAccountCode),
-                    debit: map.side === "debit" ? amount : 0,
-                    credit: map.side === "credit" ? amount : 0,
-                    note: `${map.note} ${transaction.invoice}`,
+                    glAccountId: salesRevenueGlId,
+                    debit: 0,
+                    credit: netRevenue,
+                    note: `Pendapatan Penjualan ${transaction.invoice}`,
+                });
+            }
+
+            // 3. Cr PPN Keluaran
+            if (appliedTax > 0 && salesTaxGlId) {
+                await tx.insert(journalEntries).values({
+                    journalId: salesJournal.id,
+                    glAccountId: salesTaxGlId,
+                    debit: 0,
+                    credit: appliedTax,
+                    note: `PPN Keluaran ${transaction.invoice}`,
                 });
             }
 
@@ -369,27 +379,23 @@ export async function checkout(req: Request, res: Response) {
             );
 
             if (totalCogs > 0) {
-                const cogsGlId = await getCogsGlAccountId(tx);
-                const invGlId = await getInventoryGlAccountId(tx);
+                const cogsGlId = await requireGlAccount(getCogsGlAccountId, "Beban Pokok Penjualan (HPP / COGS)", tx);
+                const invGlId = await requireGlAccount(getInventoryGlAccountId, "Persediaan Barang (Inventory)", tx);
 
-                if (cogsGlId) {
-                    await tx.insert(journalEntries).values({
-                        journalId: salesJournal.id,
-                        glAccountId: cogsGlId,
-                        debit: totalCogs,
-                        credit: 0,
-                        note: `Beban Pokok Penjualan ${transaction.invoice}`,
-                    });
-                }
-                if (invGlId) {
-                    await tx.insert(journalEntries).values({
-                        journalId: salesJournal.id,
-                        glAccountId: invGlId,
-                        debit: 0,
-                        credit: totalCogs,
-                        note: `Pengurangan Persediaan ${transaction.invoice}`,
-                    });
-                }
+                await tx.insert(journalEntries).values({
+                    journalId: salesJournal.id,
+                    glAccountId: cogsGlId,
+                    debit: totalCogs,
+                    credit: 0,
+                    note: `Beban Pokok Penjualan ${transaction.invoice}`,
+                });
+                await tx.insert(journalEntries).values({
+                    journalId: salesJournal.id,
+                    glAccountId: invGlId,
+                    debit: 0,
+                    credit: totalCogs,
+                    note: `Pengurangan Persediaan ${transaction.invoice}`,
+                });
             }
 
             // 8. Handle Payment

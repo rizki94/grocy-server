@@ -10,6 +10,7 @@ import { eq, and } from "drizzle-orm";
 import { seedGlAccounts } from "@/db/seeds/001_seed_gl_accounts";
 import { seedAccountMappings } from "@/db/seeds/002_seed_account_mappings";
 import { seedSettings } from "@/db/seeds/006_seed_settings";
+import { syncDbAccountMappings } from "@/helpers/account-mapping-sync.helper";
 import {
     PERMISSION_GROUPS,
     ALL_PERMISSIONS,
@@ -1283,6 +1284,9 @@ export async function ensureEssentialTenantData(
         // 3. Seed Settings (with resolved GL IDs)
         await seedSettings(tenantDb);
     }
+
+    // 4. Ensure all comprehensive GL account mappings in settings are populated
+    await syncDbAccountMappings(tenantDb);
 
     // 4. Ensure Default Tax (PPN 11%)
     const existingTaxes = await tenantDb.select().from(schema.taxes).limit(1);

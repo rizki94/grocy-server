@@ -2,12 +2,28 @@ import { Request, Response } from "express";
 import { db } from "@/db";
 import { settings, glAccounts } from "@/db/schemas";
 import { eq } from "drizzle-orm";
+import { syncDbAccountMappings } from "@/helpers/account-mapping-sync.helper";
 
 export const getSettings = async (req: Request, res: Response) => {
     try {
-        const result = await db.query.settings.findFirst({
+        let result = await db.query.settings.findFirst({
             where: eq(settings.id, "global"),
         });
+
+        // If core account mappings are empty in settings, auto-populate from matched wizard accounts or standard CoA
+        if (
+            result &&
+            (!result.arGlAccountId ||
+                !result.salesRevenueGlAccountId ||
+                !result.apGlAccountId ||
+                !result.inventoryGlAccountId ||
+                !result.cogsGlAccountId)
+        ) {
+            await syncDbAccountMappings(db);
+            result = await db.query.settings.findFirst({
+                where: eq(settings.id, "global"),
+            });
+        }
 
         res.json(result);
     } catch (error) {

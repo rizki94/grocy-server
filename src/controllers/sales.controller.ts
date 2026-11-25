@@ -43,6 +43,11 @@ import {
     findGlAccountByCode,
     getCogsGlAccountId,
     getInventoryGlAccountId,
+    getAccountsReceivableGlAccountId,
+    getSalesRevenueGlAccountId,
+    getOutputTaxGlAccountId,
+    requireGlAccount,
+    AccountMappingRequiredError,
 } from "@/repositories/gl-account.repository";
 import { parseTableQuery } from "@/services/table-query";
 import { branchScope, withBranch } from "@/helpers/branch.helper";
@@ -438,16 +443,15 @@ export const postSales = async (req: Request, res: Response) => {
             // OUT
             await updateStockForTransaction(id, "sales", details, tx);
 
-            // Fetch metrics for Sales
-            const mappings = await tx
-                .select()
-                .from(accountMappings)
-                .where(
-                    or(
-                        eq(accountMappings.type, "sales"),
-                        eq(accountMappings.type, "sales_tax"),
-                    ),
-                );
+            // Validate required account mappings before posting (no fallback allowed)
+            const arGlId = await requireGlAccount(getAccountsReceivableGlAccountId, "Piutang Usaha (AR)", tx);
+            const salesRevenueGlId = await requireGlAccount(getSalesRevenueGlAccountId, "Pendapatan Penjualan", tx);
+            const totalAmount = Number(sales.totalAmount || 0);
+            const totalTax = Number(sales.totalTax || 0);
+            let salesTaxGlId: string | null = null;
+            if (totalTax > 0) {
+                salesTaxGlId = await requireGlAccount(getOutputTaxGlAccountId, "PPN Keluaran", tx);
+            }
 
             const journalBranchId = await resolveBranchId(sales.branchId, req);
             const journalBranchCode = await resolveBranchCodeFromId(journalBranchId);
@@ -464,29 +468,35 @@ export const postSales = async (req: Request, res: Response) => {
                 })
                 .returning();
 
-            for (const map of mappings) {
-                let amount = 0;
-                const totalAmount = Number(sales.totalAmount);
-                const totalTax = Number(sales.totalTax || 0);
+            // 1. Dr Piutang Usaha (AR)
+            await tx.insert(journalEntries).values({
+                journalId: journal.id,
+                glAccountId: arGlId,
+                debit: totalAmount,
+                credit: 0,
+                note: `Piutang Usaha ${sales.invoice}`,
+            });
 
-                if (map.type === "sales") {
-                    if (map.side === "debit") {
-                        amount = totalAmount; // AR
-                    } else {
-                        amount = totalAmount - totalTax; // Revenue (subtotal)
-                    }
-                } else if (map.type === "sales_tax") {
-                    amount = totalTax; // Tax
-                }
-
-                if (amount === 0) continue;
-
+            // 2. Cr Pendapatan Penjualan (Revenue / Net Subtotal)
+            const netRevenue = totalAmount - totalTax;
+            if (netRevenue > 0) {
                 await tx.insert(journalEntries).values({
                     journalId: journal.id,
-                    glAccountId: await findGlAccountByCode(map.glAccountCode),
-                    debit: map.side === "debit" ? amount : 0,
-                    credit: map.side === "credit" ? amount : 0,
-                    note: `${map.note} ${sales.invoice}`,
+                    glAccountId: salesRevenueGlId,
+                    debit: 0,
+                    credit: netRevenue,
+                    note: `Pendapatan Penjualan ${sales.invoice}`,
+                });
+            }
+
+            // 3. Cr PPN Keluaran (if tax > 0)
+            if (totalTax > 0 && salesTaxGlId) {
+                await tx.insert(journalEntries).values({
+                    journalId: journal.id,
+                    glAccountId: salesTaxGlId,
+                    debit: 0,
+                    credit: totalTax,
+                    note: `PPN Keluaran ${sales.invoice}`,
                 });
             }
 
@@ -502,27 +512,23 @@ export const postSales = async (req: Request, res: Response) => {
             );
 
             if (totalCogs > 0) {
-                const cogsGlId = await getCogsGlAccountId(tx);
-                const invGlId = await getInventoryGlAccountId(tx);
+                const cogsGlId = await requireGlAccount(getCogsGlAccountId, "Beban Pokok Penjualan (HPP / COGS)", tx);
+                const invGlId = await requireGlAccount(getInventoryGlAccountId, "Persediaan Barang (Inventory)", tx);
 
-                if (cogsGlId) {
-                    await tx.insert(journalEntries).values({
-                        journalId: journal.id,
-                        glAccountId: cogsGlId,
-                        debit: totalCogs,
-                        credit: 0,
-                        note: `Beban Pokok Penjualan ${sales.invoice}`,
-                    });
-                }
-                if (invGlId) {
-                    await tx.insert(journalEntries).values({
-                        journalId: journal.id,
-                        glAccountId: invGlId,
-                        debit: 0,
-                        credit: totalCogs,
-                        note: `Pengurangan Persediaan ${sales.invoice}`,
-                    });
-                }
+                await tx.insert(journalEntries).values({
+                    journalId: journal.id,
+                    glAccountId: cogsGlId,
+                    debit: totalCogs,
+                    credit: 0,
+                    note: `Beban Pokok Penjualan ${sales.invoice}`,
+                });
+                await tx.insert(journalEntries).values({
+                    journalId: journal.id,
+                    glAccountId: invGlId,
+                    debit: 0,
+                    credit: totalCogs,
+                    note: `Pengurangan Persediaan ${sales.invoice}`,
+                });
             }
 
             // Receivable for Sales
@@ -892,43 +898,45 @@ export const cancelSales = async (req: Request, res: Response) => {
                 .returning();
 
             // Reverse Sales Revenue / Receivable / Tax
-            const mappings = await tx
-                .select()
-                .from(accountMappings)
-                .where(
-                    or(
-                        eq(accountMappings.type, "sales"),
-                        eq(accountMappings.type, "sales_tax"),
-                    ),
-                );
+            const arGlId = await requireGlAccount(getAccountsReceivableGlAccountId, "Piutang Usaha (AR)", tx);
+            const salesRevenueGlId = await requireGlAccount(getSalesRevenueGlAccountId, "Pendapatan Penjualan", tx);
+            const totalAmount = Number(original.totalAmount || 0);
+            const totalTax = Number(original.totalTax || 0);
+            let salesTaxGlId: string | null = null;
+            if (totalTax > 0) {
+                salesTaxGlId = await requireGlAccount(getOutputTaxGlAccountId, "PPN Keluaran", tx);
+            }
 
-            for (const map of mappings) {
-                let amount = 0;
-                const totalAmount = Number(original.totalAmount);
-                const totalTax = Number(original.totalTax || 0);
+            // Cr Piutang Usaha (AR Reversal)
+            await tx.insert(journalEntries).values({
+                journalId: journal.id,
+                glAccountId: arGlId,
+                debit: 0,
+                credit: totalAmount,
+                note: `Void Piutang Usaha #${original.invoice}`,
+            });
 
-                if (map.type === "sales") {
-                    if (map.side === "debit") {
-                        amount = totalAmount; // AR
-                    } else {
-                        amount = totalAmount - totalTax; // Revenue
-                    }
-                } else if (map.type === "sales_tax") {
-                    amount = totalTax;
-                }
+            // Dr Pendapatan Penjualan (Revenue Reversal)
+            const netRevenue = totalAmount - totalTax;
+            if (netRevenue > 0) {
+                await tx.insert(journalEntries).values({
+                    journalId: journal.id,
+                    glAccountId: salesRevenueGlId,
+                    debit: netRevenue,
+                    credit: 0,
+                    note: `Void Pendapatan Penjualan #${original.invoice}`,
+                });
+            }
 
-                if (amount === 0) continue;
-
-                const glId = await findGlAccountByCode(map.glAccountCode);
-                if (glId) {
-                    await tx.insert(journalEntries).values({
-                        journalId: journal.id,
-                        glAccountId: glId,
-                        debit: map.side === "credit" ? amount : 0, // Swap
-                        credit: map.side === "debit" ? amount : 0, // Swap
-                        note: `Void ${map.note} #${original.invoice}`,
-                    });
-                }
+            // Dr PPN Keluaran (Tax Reversal)
+            if (totalTax > 0 && salesTaxGlId) {
+                await tx.insert(journalEntries).values({
+                    journalId: journal.id,
+                    glAccountId: salesTaxGlId,
+                    debit: totalTax,
+                    credit: 0,
+                    note: `Void PPN Keluaran #${original.invoice}`,
+                });
             }
 
             // Reverse COGS / Inventory
@@ -940,8 +948,8 @@ export const cancelSales = async (req: Request, res: Response) => {
             );
 
             if (totalCogs > 0) {
-                const invGl = await getInventoryGlAccountId(tx);
-                const cogsGl = await getCogsGlAccountId(tx);
+                const invGl = await requireGlAccount(getInventoryGlAccountId, "Persediaan Barang (Inventory)", tx);
+                const cogsGl = await requireGlAccount(getCogsGlAccountId, "Beban Pokok Penjualan (HPP / COGS)", tx);
                 if (invGl) {
                     // Dr Inventory (1400)
                     await tx.insert(journalEntries).values({
